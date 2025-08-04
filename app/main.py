@@ -20,7 +20,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS or [],
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
 )
 
 # --- セキュリティ看板 ---

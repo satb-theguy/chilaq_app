@@ -7,6 +7,7 @@ from app.db import engine
 from app.models import Base
 from app.routers import notes as notes_router
 from app.routers import auth as auth_router
+from app.routers import compare as compare_router
 
 app = FastAPI(title="chilaq API")
 
@@ -75,3 +76,4 @@ def root():
 # --- Mount routers ---
 app.include_router(notes_router.router)
 app.include_router(auth_router.router)
+app.include_router(compare_router.router)

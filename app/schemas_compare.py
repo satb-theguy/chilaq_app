@@ -30,6 +30,7 @@ class CompareResponse(BaseModel):
     generated_at: str
     items: List[ItemResult]
     highlights: dict | None = None
+    summary: str | None = None
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

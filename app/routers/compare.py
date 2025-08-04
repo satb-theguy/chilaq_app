@@ -33,8 +33,26 @@ def compare(req: CompareRequest):
                 error="manual_required",
                 source="unknown",
             ))
+
+        lowest_price = None
+        lowest_idx = None
+        highest_rating = None
+        highest_idx = None
+
+        for i, r in enumerate(out):
+            if r.price is not None and (lowest_price is None or r.price < lowest_price):
+                lowest_price, lowest_idx = r.price, i
+            if r.rating is not None and (highest_rating is None or r.rating > highest_rating):
+                highest_rating, highest_idx = r.rating, i
+
+        highlights = {
+            "lowest_price_index": lowest_idx,       # 例: 0, 1 …
+            "highest_rating_index": highest_idx     # 例: 0, 1 …
+        }
+
     return CompareResponse(
         marketplace=req.options.marketplace,
         generated_at=now_iso(),
-        items=out
+        items=out,
+        highlights=highlights
     )

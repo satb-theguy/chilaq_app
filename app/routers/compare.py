@@ -2,6 +2,25 @@
 from fastapi import APIRouter
 from app.schemas_compare import CompareRequest, CompareResponse, ItemResult, now_iso
 
+def simple_summary(items: list[ItemResult], hl: dict | None) -> str:
+    if not items:
+        return "比較対象がありません。"
+    msgs = []
+    lp = (hl or {}).get("lowest_price_index")
+    hr = (hl or {}).get("highest_rating_index")
+    if isinstance(lp, int) and 0 <= lp < len(items):
+        x = items[lp]
+        price = f"{x.price:g} {x.currency}" if (x.price is not None and x.currency) else (
+                 f"{x.price:g}" if x.price is not None else "価格不明")
+        msgs.append(f"最安は「{x.title or '商品'}」で {price}。")
+    if isinstance(hr, int) and 0 <= hr < len(items):
+        y = items[hr]
+        rating = f"{y.rating:.1f}★" if y.rating is not None else "評価不明"
+        msgs.append(f"評価が最も高いのは「{y.title or '商品'}」で {rating}。")
+    if not msgs:
+        return "価格や評価の情報が不足しています。手動入力を増やすと比較精度が上がります。"
+    return " ".join(msgs)
+
 router = APIRouter(prefix="/api", tags=["compare"])
 
 @router.post("/compare", response_model=CompareResponse)
@@ -49,10 +68,12 @@ def compare(req: CompareRequest):
             "lowest_price_index": lowest_idx,       # 例: 0, 1 …
             "highest_rating_index": highest_idx     # 例: 0, 1 …
         }
+        summary = simple_summary(out, highlights)
 
     return CompareResponse(
         marketplace=req.options.marketplace,
         generated_at=now_iso(),
         items=out,
-        highlights=highlights
+        highlights=highlights,
+        summary=summary
     )

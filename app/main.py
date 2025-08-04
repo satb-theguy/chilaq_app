@@ -130,3 +130,36 @@ def delete_note(note_id: int):
         s.delete(row)
         s.commit()
         return JSONResponse(status_code=204, content=None)
+
+
+from fastapi import Response, Cookie, Depends
+
+# 簡易：ログインすると Cookie "session" を発行
+@app.post("/login")
+def login(resp: Response):
+    # 本来はユーザー確認するが、まずは「テスト用の鍵」を配るだけ
+    resp.set_cookie(
+        key="session",
+        value="demo-token-123",      # デモ用。将来はランダムに生成
+        httponly=True,               # JSから読めない＝安全
+        secure=True,                 # HTTPSのみ送信（本番前提）
+        samesite="None",             # 別オリジンでも送る（localhost:3000 → www.chilaq.jp のため）
+        max_age=60 * 60 * 24,        # 1日
+    )
+    return {"ok": True}
+
+# Cookie が無ければ 401 を返すガード
+def require_session(session: str | None = Cookie(default=None)):
+    if session != "demo-token-123":
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+# 守られたエンドポイント（ログインしないと入れない）
+@app.get("/me")
+def me(_=Depends(require_session)):
+    return {"user": "demo"}
+
+# ログアウト：Cookie を消す
+@app.post("/logout")
+def logout(resp: Response):
+    resp.delete_cookie("session")
+    return {"ok": True}

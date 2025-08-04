@@ -40,7 +40,7 @@ async def unhandled_exc_handler(request: Request, exc: Exception):
 
 @app.get("/")
 def root():
-    return {"ok": True, "message": "Hello from chilaq.jp! v2"}
+    return {"ok": True, "message": "Hello from chilaq.jp! v3"}
 
 @app.get("/health")
 def health():
@@ -57,4 +57,4 @@ def crash():
     
 @app.get("/version")
 def version():
-    return {"app": "chilaq", "version": "0.1.1"}
+    return {"app": "chilaq", "version": "0.1.2"}

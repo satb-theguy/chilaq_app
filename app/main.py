@@ -98,42 +98,47 @@ def index():
 
 <div id="items"></div>
 <p>
-  <button id="add">＋ 行を追加</button>
-  <button id="gen">生成する</button>
-  <button id="clear">クリア</button>
+  <button id="add" type="button">＋ 行を追加</button>
+  <button id="gen" type="button">生成する</button>
+  <button id="clear" type="button">クリア</button>
 </p>
 
 <div id="result"></div>
 
 <script>
-const MAX = 5;
-const itemsEl = document.getElementById('items');
+document.addEventListener('DOMContentLoaded', () => {
+  const MAX = 5;
+  const itemsEl = document.getElementById('items');
 
-function rowTemplate(i){
-  return `
-  <div class="row" data-i="${i}">
-    <input type="text" placeholder="商品URL (https://www.amazon.co.jp/dp/...)" class="url">
-    <input type="text" placeholder="商品名 (任意)" class="title">
-    <input type="number" placeholder="価格 (例: 1980)" class="price" step="0.01" min="0">
-    <input type="number" placeholder="評価 (例: 4.3)" class="rating" step="0.1" min="0" max="5">
-    <input type="number" placeholder="レビュー数 (例: 120)" class="reviews" step="1" min="0">
-  </div>`;
-}
+  function rowTemplate(i){
+    return `
+    <div class="row" data-i="${i}">
+      <input type="text" placeholder="商品URL (https://www.amazon.co.jp/dp/...)" class="url">
+      <input type="text" placeholder="商品名 (任意)" class="title">
+      <input type="number" placeholder="価格 (例: 1980)" class="price" step="0.01" min="0">
+      <input type="number" placeholder="評価 (例: 4.3)" class="rating" step="0.1" min="0" max="5">
+      <input type="number" placeholder="レビュー数 (例: 120)" class="reviews" step="1" min="0">
+    </div>`;
+  }
 
-function ensureRows(n=2){
-  itemsEl.innerHTML = "";
-  for(let i=0;i<n;i++) itemsEl.insertAdjacentHTML('beforeend', rowTemplate(i));
-}
+  function ensureRows(n=2){
+    itemsEl.innerHTML = "";
+    for(let i=0;i<n;i++) itemsEl.insertAdjacentHTML('beforeend', rowTemplate(i));
+  }
 
-ensureRows(); // 初期2行
+  ensureRows(); // 初期2行
 
-document.getElementById('add').onclick = () => {
-  const count = itemsEl.querySelectorAll('.row').length;
-  if (count >= MAX) { alert('最大5件までです'); return; }
-  itemsEl.insertAdjacentHTML('beforeend', rowTemplate(count));
-};
+  document.getElementById('add').addEventListener('click', () => {
+    const count = itemsEl.querySelectorAll('.row').length;
+    if (count >= MAX) { alert('最大5件までです'); return; }
+    itemsEl.insertAdjacentHTML('beforeend', rowTemplate(count));
+  });
 
-document.getElementById('clear').onclick = () => ensureRows();
+  document.getElementById('clear').addEventListener('click', () => ensureRows());
+
+  // 既存の buildPayload / toCSV / copyText / gen クリック処理はこの中にそのまま残す
+  // （いま書いている関数やイベントハンドラを、このブロック内へ移動）
+});
 
 function buildPayload(){
   const market = document.getElementById('market').value;

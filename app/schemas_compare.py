@@ -1,4 +1,3 @@
-cat > app/schemas_compare.py << 'PY'
 from pydantic import BaseModel, HttpUrl, Field
 from typing import List, Optional, Literal
 from datetime import datetime, timezone
@@ -33,4 +32,3 @@ class CompareResponse(BaseModel):
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-PY

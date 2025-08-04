@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 import logging, time, os
 
 # --- SQLAlchemy (同期版) ---
@@ -9,6 +10,28 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 
 # ===== App =====
 app = FastAPI(title="chilaq API")
+
+# --- CORS (顔パス名簿) ---
+_raw = os.environ.get("ALLOW_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _raw.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS or [],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
+
+# --- セキュリティ看板 ---
+@app.middleware("http")
+async def security_headers(request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    resp.headers["Strict-Transport-Security"] = "max-age=15552000; includeSubDomains; preload"
+    return resp
 
 # --- Logging (防犯カメラ) ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

@@ -75,44 +75,155 @@ def index():
 <!doctype html><meta charset="utf-8">
 <title>1分比較表メーカー</title>
 <style>
-body{font-family:sans-serif;max-width:920px;margin:20px auto;padding:0 12px}
-textarea{width:100%} table{border-collapse:collapse;width:100%}
-th,td{border:1px solid #ddd;padding:6px} th{background:#f5f5f5}
+  body{font-family:sans-serif;max-width:980px;margin:24px auto;padding:0 12px}
+  .row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px}
+  input[type=text],input[type=number]{width:100%;padding:6px}
+  button{padding:8px 12px;margin-right:6px}
+  table{border-collapse:collapse;width:100%;margin-top:16px}
+  th,td{border:1px solid #ddd;padding:6px} th{background:#f7f7f7}
+  .muted{color:#666;font-size:12px}
 </style>
-<h1>1分比較表メーカー（MVP）</h1>
-<p>テキスト欄のJSONを編集して「生成する」を押すと <code>/api/compare</code> を呼びます。</p>
-<textarea id="in" rows="8">
-{"items":[
- {"url":"https://www.amazon.co.jp/dp/B0AAA","manual":{"title":"商品A","price":1980,"currency":"JPY","rating":4.2,"reviews":120}},
- {"url":"https://www.amazon.co.jp/dp/B0BBB","manual":{"title":"商品B","price":2480,"currency":"JPY","rating":4.4,"reviews":80}}
-],"options":{"marketplace":"JP"}}</textarea>
-<p><button id="go">生成する</button></p>
-<div id="out"></div>
+
+<h1>1分比較表メーカー</h1>
+<p class="muted">最大5件まで。PA-API未承認のため、当面は手動入力で比較します。</p>
+
+<div>
+  <label>マーケットプレイス:
+    <select id="market">
+      <option value="JP" selected>JP</option>
+      <option value="US">US</option>
+    </select>
+  </label>
+</div>
+
+<div id="items"></div>
+<p>
+  <button id="add">＋ 行を追加</button>
+  <button id="gen">生成する</button>
+  <button id="clear">クリア</button>
+</p>
+
+<div id="result"></div>
+
 <script>
-document.getElementById('go').onclick = async () => {
-  let payload;
-  try { payload = JSON.parse(document.getElementById('in').value); }
-  catch(e){ alert('JSONの形式が不正です'); return; }
+const MAX = 5;
+const itemsEl = document.getElementById('items');
+
+function rowTemplate(i){
+  return `
+  <div class="row" data-i="${i}">
+    <input type="text" placeholder="商品URL (https://www.amazon.co.jp/dp/...)" class="url">
+    <input type="text" placeholder="商品名 (任意)" class="title">
+    <input type="number" placeholder="価格 (例: 1980)" class="price" step="0.01" min="0">
+    <input type="number" placeholder="評価 (例: 4.3)" class="rating" step="0.1" min="0" max="5">
+    <input type="number" placeholder="レビュー数 (例: 120)" class="reviews" step="1" min="0">
+  </div>`;
+}
+
+function ensureRows(n=2){
+  itemsEl.innerHTML = "";
+  for(let i=0;i<n;i++) itemsEl.insertAdjacentHTML('beforeend', rowTemplate(i));
+}
+
+ensureRows(); // 初期2行
+
+document.getElementById('add').onclick = () => {
+  const count = itemsEl.querySelectorAll('.row').length;
+  if (count >= MAX) { alert('最大5件までです'); return; }
+  itemsEl.insertAdjacentHTML('beforeend', rowTemplate(count));
+};
+
+document.getElementById('clear').onclick = () => ensureRows();
+
+function buildPayload(){
+  const market = document.getElementById('market').value;
+  const rows = Array.from(itemsEl.querySelectorAll('.row'));
+  const items = rows.map(r => {
+    const url = r.querySelector('.url').value.trim();
+    const title = r.querySelector('.title').value.trim();
+    const price = r.querySelector('.price').value.trim();
+    const rating = r.querySelector('.rating').value.trim();
+    const reviews = r.querySelector('.reviews').value.trim();
+    const manual = {};
+    if (title) manual.title = title;
+    if (price) manual.price = Number(price);
+    if (rating) manual.rating = Number(rating);
+    if (reviews) manual.reviews = Number(reviews);
+    return { url: url || null, manual: Object.keys(manual).length ? manual : null };
+  }).filter(x => x.url || x.manual); // 空行は除外
+
+  return {
+    items,
+    options: { marketplace: market }
+  };
+}
+
+function toCSV(items){
+  const head = ["商品名","価格","通貨","評価","レビュー","ASIN","URL"];
+  const rows = items.map(x => [
+    x.title || "",
+    (x.price ?? ""),
+    (x.currency || ""),
+    (x.rating ?? ""),
+    (x.reviews ?? ""),
+    (x.asin || ""),
+    (x.url || "")
+  ]);
+  const all = [head, ...rows];
+  return all.map(r => r.map(v=>{
+    const s = String(v).replace(/"/g,'""');
+    return /[",\n]/.test(s) ? `"${s}"` : s;
+  }).join(",")).join("\\n");
+}
+
+function copyText(text){
+  navigator.clipboard.writeText(text).then(()=> alert("コピーしました")).catch(()=> alert("コピー失敗"));
+}
+
+document.getElementById('gen').onclick = async () => {
+  const payload = buildPayload();
+  if ((payload.items||[]).length < 2) { alert('少なくとも2件入力してください'); return; }
   const res = await fetch('/api/compare', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
+    method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(payload)
   });
   const data = await res.json();
-  const rows = (data.items||[]).map(x => `<tr>
-    <td>${x.title||""}</td>
-    <td>${x.price??""} ${x.currency||""}</td>
-    <td>${x.rating??""}</td>
-    <td>${x.reviews??""}</td>
-  </tr>`).join('');
+
   const hl = data.highlights || {};
-  document.getElementById('out').innerHTML = `
+  const rows = (data.items||[]).map((x,i) => {
+    const badge = [
+      (hl.lowest_price_index === i ? '💰' : ''),
+      (hl.highest_rating_index === i ? '⭐' : '')
+    ].join('');
+    return `<tr>
+      <td>${badge} ${x.title||""}</td>
+      <td>${x.price??""} ${x.currency||""}</td>
+      <td>${x.rating??""}</td>
+      <td>${x.reviews??""}</td>
+      <td><a href="${x.url||'#'}" target="_blank" rel="noopener">リンク</a></td>
+    </tr>`;
+  }).join('');
+
+  const csv = toCSV(data.items||[]);
+  const html = `
     <p>生成時刻: ${data.generated_at}</p>
-    <p>ハイライト: 最安=${hl.lowest_price_index ?? "-"} / 最高評価=${hl.highest_rating_index ?? "-"}</p>
-    <table><thead><tr><th>商品名</th><th>価格</th><th>評価</th><th>レビュー</th></tr></thead>
-    <tbody>${rows}</tbody></table>
     <p>${data.summary || ""}</p>
+    <p>
+      <button id="copy">表をコピー（CSV）</button>
+      <a id="dl" download="compare.csv">CSVをダウンロード</a>
+    </p>
+    <table>
+      <thead><tr><th>商品名</th><th>価格</th><th>評価</th><th>レビュー</th><th>URL</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
   `;
+  const box = document.getElementById('result');
+  box.innerHTML = html;
+
+  // ボタン動作
+  document.getElementById('copy').onclick = ()=> copyText(csv);
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  document.getElementById('dl').href = URL.createObjectURL(blob);
 };
 </script>
 """

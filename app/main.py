@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import logging, time, os
 
@@ -69,9 +69,53 @@ def on_startup():
 def health():
     return {"status": "healthy"}
 
-@app.get("/")
-def root():
-    return {"ok": True, "message": "Hello from chilaq.jp! with DB and routers"}
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return """
+<!doctype html><meta charset="utf-8">
+<title>1分比較表メーカー</title>
+<style>
+body{font-family:sans-serif;max-width:920px;margin:20px auto;padding:0 12px}
+textarea{width:100%} table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #ddd;padding:6px} th{background:#f5f5f5}
+</style>
+<h1>1分比較表メーカー（MVP）</h1>
+<p>テキスト欄のJSONを編集して「生成する」を押すと <code>/api/compare</code> を呼びます。</p>
+<textarea id="in" rows="8">
+{"items":[
+ {"url":"https://www.amazon.co.jp/dp/B0AAA","manual":{"title":"商品A","price":1980,"currency":"JPY","rating":4.2,"reviews":120}},
+ {"url":"https://www.amazon.co.jp/dp/B0BBB","manual":{"title":"商品B","price":2480,"currency":"JPY","rating":4.4,"reviews":80}}
+],"options":{"marketplace":"JP"}}</textarea>
+<p><button id="go">生成する</button></p>
+<div id="out"></div>
+<script>
+document.getElementById('go').onclick = async () => {
+  let payload;
+  try { payload = JSON.parse(document.getElementById('in').value); }
+  catch(e){ alert('JSONの形式が不正です'); return; }
+  const res = await fetch('/api/compare', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  const rows = (data.items||[]).map(x => `<tr>
+    <td>${x.title||""}</td>
+    <td>${x.price??""} ${x.currency||""}</td>
+    <td>${x.rating??""}</td>
+    <td>${x.reviews??""}</td>
+  </tr>`).join('');
+  const hl = data.highlights || {};
+  document.getElementById('out').innerHTML = `
+    <p>生成時刻: ${data.generated_at}</p>
+    <p>ハイライト: 最安=${hl.lowest_price_index ?? "-"} / 最高評価=${hl.highest_rating_index ?? "-"}</p>
+    <table><thead><tr><th>商品名</th><th>価格</th><th>評価</th><th>レビュー</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <p>${data.summary || ""}</p>
+  `;
+};
+</script>
+"""
 
 # --- Mount routers ---
 app.include_router(notes_router.router)

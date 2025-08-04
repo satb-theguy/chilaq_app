@@ -29,6 +29,7 @@ class CompareResponse(BaseModel):
     marketplace: str
     generated_at: str
     items: List[ItemResult]
+    highlights: dict | None = None
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

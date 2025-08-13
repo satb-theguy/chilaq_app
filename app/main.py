@@ -681,3 +681,9 @@ def healthz():
         },
         "db_url_scheme": db_scheme
     }
+
+@app.get("/posts/{post_id}/likes", include_in_schema=False)
+def get_likes(post_id: int, db: Session = Depends(get_db)):
+    post = db.get(Post, post_id)
+    if not post: raise HTTPException(404, "post not found")
+    return {"post_id": post_id, "likes": int(post.likes or 0)}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-import os, random, logging, time
+import os, random, logging, time, importlib.metadata
 from typing import Optional
 
 from app.utils import youtube_embed, spotify_embed, apple_embed, resolve_thumbnail_for_post
@@ -661,3 +661,23 @@ def admin_users_new(
 def require_admin(request: Request):
     if not request.session.get("is_admin"):
         raise HTTPException(status_code=403, detail="admin only")
+
+GIT_SHA = os.getenv("GIT_SHA", "").strip()
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    try:
+        db_scheme = engine.url.get_backend_name() if engine else "none"
+    except Exception:
+        db_scheme = "unknown"
+    return {
+        "status": "ok",
+        "git_sha": GIT_SHA or "unknown",
+        "versions": {
+            "python": os.sys.version.split()[0],
+            "fastapi": importlib.metadata.version("fastapi"),
+            "sqlalchemy": importlib.metadata.version("sqlalchemy"),
+            "uvicorn": importlib.metadata.version("uvicorn"),
+        },
+        "db_url_scheme": db_scheme
+    }

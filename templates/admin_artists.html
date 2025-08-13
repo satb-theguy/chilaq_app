@@ -45,7 +45,7 @@
         <span>{{ a.name }} {% if a.owner %}<span class="text-muted">— {{ a.owner.email }}</span>{% endif %}</span>
         <div class="d-flex gap-2">
           <a class="btn btn-sm btn-outline-secondary" href="/artist/{{ a.slug }}">Open</a>
-          <a class="btn btn-sm btn-outline-primary" href="/artist/{{ a.id }}/edit">Edit</a>
+          <a class="btn btn-sm btn-outline-primary" href="/admin/artists/{{ a.id }}/edit">Edit</a>
         </div>
       </li>
       {% endfor %}

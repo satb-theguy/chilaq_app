@@ -5,7 +5,7 @@ from typing import Optional
 
 from app.utils import youtube_embed, spotify_embed, apple_embed, resolve_thumbnail_for_post
 
-from fastapi import FastAPI, Request, Depends, Form, HTTPException
+from fastapi import FastAPI, Request, Response, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -39,6 +39,30 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "../templates"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("chilaq")
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def _like_post_core(db: Session, post_id: int, request: Request, response: Response):
+    post = db.get(Post, post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="post not found")
+
+    # 同一ブラウザの二重加算をクッキーで防止（既に押していたら加算しない）
+    already = request.cookies.get(f"liked_{post_id}") == "1"
+    if not already:
+        post.likes = (post.likes or 0) + 1
+        db.add(post)
+        db.commit()
+        response.set_cookie(
+            key=f"liked_{post_id}", value="1",
+            max_age=60*60*24*365*5,  # 5年
+            httponly=False, samesite="Lax", secure=True  # 本番HTTPS想定
+        )
+    return {"likes": post.likes or 0, "liked": True}
 
 # =========================
 # ヘルパ：現在のユーザー
@@ -207,6 +231,21 @@ def api_like(post_id: int, request: Request, db: Session = Depends(get_db)):
     request.session["last_like_ts"] = now
 
     return {"ok": True, "hearts": post.hearts, "liked": True}
+
+
+@app.post("/posts/{post_id}/like", name="like_post")
+def like_post(post_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
+    return _like_post_core(db, post_id, request, response)
+
+# 互換：/api/posts/{id}/like
+@app.post("/api/posts/{post_id}/like", include_in_schema=False)
+def like_post_api(post_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
+    return _like_post_core(db, post_id, request, response)
+
+# 互換：/p/{id}/like
+@app.post("/p/{post_id}/like", include_in_schema=False)
+def like_post_short(post_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
+    return _like_post_core(db, post_id, request, response)
 
 
 # =========================

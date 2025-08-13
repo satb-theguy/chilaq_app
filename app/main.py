@@ -126,20 +126,25 @@ def on_startup():
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_db)):
     # 公開フィード用の投稿を取得（削除除外）
-    posts = db.execute(
-        select(Post).where(Post.is_deleted == False).order_by(Post.created_at.desc()).limit(30)
-    ).scalars().all()
+    posts = db.scalars(
+        select(Post)
+        .where(Post.is_deleted == False)
+        .order_by(Post.created_at.desc())
+        .limit(30)
+    ).all()
 
-    # テンプレに渡す用：サムネURL付きの辞書へ
-    cards = [
-        {"post": p, "thumb": resolve_thumbnail_for_post(p)}
-        for p in posts
-    ]
+    logger.info(f"INDEX: fetched {len(posts)} posts from DB")
 
-    return templates.TemplateResponse(
+    # テンプレに posts を渡す。サムネは関数を渡してテンプレ側で thumb_of(post) として使用
+    resp = templates.TemplateResponse(
         "index.html",
-        {"request": request, "cards": cards}
+        {"request": request, "posts": posts, "thumb_of": resolve_thumbnail_for_post},
     )
+    # 初期描画の数字が古くならないようキャッシュ無効
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 @app.get("/p/{post_id}", response_class=HTMLResponse)
 def post_detail(post_id: int, request: Request, db: Session = Depends(get_db)):

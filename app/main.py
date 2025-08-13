@@ -13,7 +13,7 @@ from starlette.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from .db import Base, engine, get_db, SessionLocal
@@ -51,18 +51,23 @@ def _like_post_core(db: Session, post_id: int, request: Request, response: Respo
     if not post:
         raise HTTPException(status_code=404, detail="post not found")
 
-    # 同一ブラウザの二重加算をクッキーで防止（既に押していたら加算しない）
+    # likes が None の旧データに備えて 0 を保証
+    post.likes = int(post.likes or 0)
+
+    # 同一ブラウザの二重加算ガード（クッキー）
     already = request.cookies.get(f"liked_{post_id}") == "1"
     if not already:
-        post.likes = (post.likes or 0) + 1
+        post.likes += 1
         db.add(post)
         db.commit()
+        # ローカルHTTPでも動くよう secure 判定を自動化
         response.set_cookie(
             key=f"liked_{post_id}", value="1",
             max_age=60*60*24*365*5,  # 5年
-            httponly=False, samesite="Lax", secure=True  # 本番HTTPS想定
+            httponly=False, samesite="Lax",
+            secure=(request.url.scheme == "https")
         )
-    return {"likes": post.likes or 0, "liked": True}
+    return {"likes": post.likes, "liked": True}
 
 # =========================
 # ヘルパ：現在のユーザー
@@ -85,38 +90,34 @@ def require_login(request: Request, db: Session) -> User:
 # =========================
 @app.on_event("startup")
 def on_startup():
+    if not engine:
+        logger.warning("DATABASE_URL not set")
+        return
+
+    # 既存テーブルが無ければ作成（初回用）
     Base.metadata.create_all(engine)
-    # 既にユーザーがいれば seed 済みとみなす
-    with next(get_db()) as db:
-        if not db.execute(select(func.count(User.id))).scalar():
-            # 管理者ユーザー作成（パスワードは demo1234）
-            admin = User(email="admin@chilaq.jp", password_hash=hash_password("demo1234"), is_admin=True)
-            db.add(admin); db.flush()  # flush すると admin.id が取れる
+    logger.info("tables ensured")
 
-            # アーティスト 3名（A/B/C）を用意し、C は admin の所有にしてみる
-            a1 = Artist(name="City Wanderer", slug=slugify("City Wanderer"), twitter="https://x.com/citywand")
-            a2 = Artist(name="Neon Loft", slug=slugify("Neon Loft"), instagram="https://instagram.com/neonloft")
-            a3 = Artist(name="Echo Lake", slug=slugify("Echo Lake"), spotify="https://open.spotify.com/artist/2N9...")
-            a3.owner_id = admin.id
-            db.add_all([a1,a2,a3]); db.flush()
-
-            # 各アーティスト 3投稿（YouTube/Spotify/Apple を混在）
-            posts_data = [
-                (a1, "Night Drive", "https://youtu.be/dQw4w9WgXcQ", None, None),
-                (a1, "City Lights", None, "https://open.spotify.com/track/11dFghVXANMlKmJXsNCbNl", None),
-                (a1, "Early Morning", None, None, "https://embed.music.apple.com/jp/album/1450695604?i=1450695605"),
-                (a2, "Loft Jazz", "https://www.youtube.com/watch?v=aqz-KE-bpKQ", None, None),
-                (a2, "Rain on Window", None, "https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b", None),
-                (a2, "Wooden Floor", None, None, "https://embed.music.apple.com/jp/album/1440881047?i=1440881052"),
-                (a3, "Waveforms", "https://youtu.be/3JZ_D3ELwOQ", None, None),
-                (a3, "Quiet Bay", None, "https://open.spotify.com/track/7ouMYWpwJ422jRcDASZB7P", None),
-                (a3, "Foggy Noon", None, None, "https://embed.music.apple.com/jp/album/1440651591?i=1440651592"),
-            ]
-            for art, title, yt, sp, am in posts_data:
-                p = Post(title=title, artist_id=art.id, url_youtube=yt, url_spotify=sp, url_apple=am, hearts=random.randint(0,50))
-                db.add(p)
-            db.commit()
-            logger.info("Seeded admin user and sample artists/posts.")
+    # posts.likes が無ければ追加（SQLite/PG 対応）
+    try:
+        insp = inspect(engine)
+        if "posts" in insp.get_table_names():
+            cols = {c["name"] for c in insp.get_columns("posts")}
+            if "likes" not in cols:
+                logger.info("adding posts.likes column...")
+                with engine.begin() as conn:
+                    if engine.dialect.name.startswith("postgre"):
+                        conn.execute(text(
+                            "ALTER TABLE posts ADD COLUMN IF NOT EXISTS likes INTEGER NOT NULL DEFAULT 0"
+                        ))
+                    else:
+                        # SQLite は IF NOT EXISTS が使えない
+                        conn.execute(text(
+                            "ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0"
+                        ))
+                logger.info("posts.likes added")
+    except Exception:
+        logger.exception("failed to ensure posts.likes column")
 
 
 # =========================

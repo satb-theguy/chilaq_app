@@ -51,5 +51,7 @@ class Post(Base):
     hearts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
-
     artist: Mapped[Artist] = relationship("Artist", back_populates="posts")
+    likes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )

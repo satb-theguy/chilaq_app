@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, func, desc
 from sqlalchemy.exc import IntegrityError
 
-from .db import Base, engine, get_db
+from .db import Base, engine, get_db, SessionLocal
 from .models import User, Artist, Post, slugify
 from .utils import hash_password, verify_password
 
@@ -361,6 +361,56 @@ def admin_link_artist(request: Request, db: Session = Depends(get_db), artist_id
     db.commit()
     return RedirectResponse(url="/admin/artists", status_code=302)
 
+# --- Artist: 編集ページ 表示 ---
+@app.get("/admin/artists/{artist_id}/edit", name="admin_artist_edit_page")
+def admin_artist_edit_page(artist_id: int, request: Request):
+    require_admin(request)
+    with SessionLocal() as db:
+        artist = db.get(Artist, artist_id)
+        if not artist:
+            raise HTTPException(status_code=404, detail="artist not found")
+    return templates.TemplateResponse("artist_edit.html", {
+        "request": request,
+        "title": "アーティスト編集",
+        "artist": artist,
+    })
+
+# --- Artist: 更新保存 ---
+@app.post("/admin/artists/{artist_id}/edit", name="admin_artist_update")
+def admin_artist_update(
+    artist_id: int,
+    request: Request,
+    name: str = Form(...),
+    website: str | None = Form(None),
+    x_url: str | None = Form(None),          # X(Twitter)
+    spotify_url: str | None = Form(None),
+    bio: str | None = Form(None),
+):
+    require_admin(request)
+    with SessionLocal() as db:
+        artist = db.get(Artist, artist_id)
+        if not artist:
+            raise HTTPException(status_code=404, detail="artist not found")
+
+        # 必須：名前
+        name = (name or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+
+        artist.name = name
+        # 名前が変わったら slug も更新（models.py の slugify を利用）
+        artist.slug = slugify(name)
+        artist.website = (website or "").strip() or None
+        artist.x_url = (x_url or "").strip() or None
+        artist.spotify_url = (spotify_url or "").strip() or None
+        artist.bio = (bio or "").strip() or None
+
+        db.add(artist)
+        db.commit()
+
+    # 一覧に戻す（既存の一覧ルート名が別なら合わせて変更）
+    return RedirectResponse(url=request.url_for("admin_artists"), status_code=303)
+
 # =========================
 # 投稿の編集（所有 or 管理者）
 # =========================
@@ -567,3 +617,7 @@ def admin_users_new(
         )
 
     return RedirectResponse(url="/admin/users", status_code=302)
+
+def require_admin(request: Request):
+    if not request.session.get("is_admin"):
+        raise HTTPException(status_code=403, detail="admin only")

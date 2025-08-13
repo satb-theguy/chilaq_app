@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0">Users</h3>
+<a href="/admin/users/new" class="btn btn-primary">＋ 新規ユーザー</a>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table mb-0 align-middle">
+      <thead>
+        <tr>
+          <th style="width:80px;">ID</th>
+          <th>Email</th>
+          <th style="width:120px;">Role</th>
+          <th style="width:220px;" class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td class="text-muted">{{ u.id }}</td>
+          <td>{{ u.email }}</td>
+          <td>
+            {% if u.is_admin %}
+              <span class="badge text-bg-danger">admin</span>
+            {% else %}
+              <span class="badge text-bg-secondary">member</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+  <!-- Reset は GET 画面へ遷移させる：リンクで -->
+  <a class="btn btn-sm btn-outline-primary me-1"
+     href="{{ request.url_for('admin_user_password_page', user_id=u.id) }}">
+    Reset
+  </a>
+
+  {# 自分 or 最後のadmin は削除ボタン非表示（サーバ側でも検証済み） #}
+  {% set is_self = (user and user.id == u.id) %}
+  {% set is_last_admin = (u.is_admin and admin_count is defined and admin_count <= 1) %}
+
+  {% if not is_self and not is_last_admin %}
+    <!-- Delete は POST 専用：フォームで -->
+    <form method="post"
+          action="{{ request.url_for('admin_user_delete', user_id=u.id) }}"
+          class="d-inline"
+          onsubmit="return confirm('ユーザー {{ u.email }} を削除します。よろしいですか？');">
+      <button class="btn btn-sm btn-outline-danger">Delete</button>
+    </form>
+  {% else %}
+    <span class="text-muted small">
+      {% if is_self %}（自分は削除不可）{% elif is_last_admin %}（最後の管理者は削除不可）{% endif %}
+    </span>
+  {% endif %}
+</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="text-muted">ユーザーがいません</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

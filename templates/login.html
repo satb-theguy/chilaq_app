@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-md-6">
+      <div class="card shadow-sm p-4">
+        <h4 class="mb-3">アーティストログイン</h4>
+        {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+        <form method="post" action="/login">
+          <div class="mb-3">
+            <label class="form-label">メールアドレス</label>
+            <input class="form-control" type="email" name="email" required placeholder="you@example.com">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">パスワード</label>
+            <input class="form-control" type="password" name="password" required>
+          </div>
+          <button class="btn btn-primary w-100" type="submit">ログイン</button>
+          <p class="text-muted small mt-3 mb-0">現在、Chilaqは自身の作品を投稿していただけるアーティストを募集しています！</p>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}

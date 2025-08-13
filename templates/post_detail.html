@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="row">
+    <div class="col-lg-8">
+      <h2 class="fw-bold">{{ post.title }}</h2>
+      <p><a href="/artist/{{ post.artist.slug }}" class="text-decoration-none">{{ post.artist.name }}</a></p>
+
+      {% if embeds.youtube %}
+      <div class="ratio ratio-16x9 mb-3">
+        <iframe src="{{ embeds.youtube }}" allowfullscreen></iframe>
+      </div>
+      {% endif %}
+
+      {% if embeds.spotify %}
+      <div class="mb-3">
+        <iframe style="border-radius:12px" src="{{ embeds.spotify }}" width="100%" height="152" frameBorder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>
+      </div>
+      {% endif %}
+
+      {% if embeds.apple %}
+        <iframe
+          src="{{ embeds.apple }}"
+          width="100%"
+          height="{{ embeds.apple_h or 450 }}"
+          style="border-radius:12px; overflow:hidden; background:transparent;"
+          frameborder="0"
+          loading="lazy"
+          allow="autoplay *; encrypted-media *; clipboard-write; fullscreen *; picture-in-picture"
+          sandbox="allow-forms allow-popups allow-same-origin allow-scripts allow-top-navigation-by-user-activation">
+        </iframe>
+      {% endif %}
+    </div>
+    <div class="col-lg-4">
+      <div class="sticky-top" style="top:1rem">
+
+        <div class="justify-content-end mb-3">
+  <button
+    class="heart-btn heart-off"
+    type="button"
+    data-post-id="{{ post.id }}"
+    data-like-endpoints='["/p/{{ post.id }}/like","/api/posts/{{ post.id }}/like"]'
+    aria-label="いいね">
+    <span class="icon">♥</span>
+    <span class="count">{{ post.hearts or 0 }}</span>
+  </button>
+</div>
+        <div class="card p-3">
+          <h6 class="fw-bold">Share</h6>
+          <a class="btn btn-outline-secondary btn-sm" href="https://x.com/intent/tweet?url={{ request.url }}">Post to X</a>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

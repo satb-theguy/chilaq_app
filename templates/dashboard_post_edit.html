@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0">Edit Post</h3>
+    <a href="/dashboard/posts" class="btn btn-outline-secondary">Back</a>
+  </div>
+
+  <form method="post" action="/dashboard/posts/{{ post.id }}/edit">
+    <div class="mb-3">
+      <label class="form-label">Title (曲名)</label>
+      <input class="form-control" type="text" name="title" value="{{ post.title }}" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">YouTube URL</label>
+      <input class="form-control" type="url" name="url_youtube" value="{{ post.url_youtube or '' }}" placeholder="https://www.youtube.com/watch?v=...">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Spotify URL</label>
+      <input class="form-control" type="url" name="url_spotify" value="{{ post.url_spotify or '' }}" placeholder="https://open.spotify.com/track/...">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Apple Music Embed URL</label>
+      <input class="form-control" type="url" name="url_apple" value="{{ post.url_apple or '' }}" placeholder="https://embed.music.apple.com/...">
+    </div>
+
+    <button class="btn btn-primary" type="submit">Save</button>
+    <a href="/p/{{ post.id }}" class="btn btn-link">Cancel</a>
+  </form>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="text-center mb-4">
+    <h1 class="display-6 fw-bold">もっと、好みの音楽をディグる</h1>
+    <p class="text-muted mb-0">知らない「いい音楽」と出会うためのメディア</p>
+  </div>
+
+  <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-3">
+  {% for c in cards %}
+    {% set p = c.post %}
+    <div class="col">
+      <div class="card h-100">
+        <a href="/p/{{ p.id }}" class="text-decoration-none">
+          <img src="{{ c.thumb }}" class="card-img-top" alt="{{ p.title|e }}">
+        </a>
+        <div class="card-body d-flex justify-content-between align-items-start">
+          <div class="me-2">
+            <h5 class="card-title mb-1">
+              <a href="/p/{{ p.id }}" class="text-reset text-decoration-none">{{ p.title }}</a>
+            </h5>
+            <div class="text-muted small">
+              <a href="/artist/{{ p.artist.slug }}" class="text-muted text-decoration-none">
+                {{ p.artist.name }}
+              </a>
+            </div>
+          </div>
+
+          <!-- ❤ ハート：投稿詳細と同一の部品 -->
+          <button
+            class="heart-btn heart-off"
+            type="button"
+            data-post-id="{{ p.id }}"
+            data-like-endpoints='["/p/{{ p.id }}/like","/api/posts/{{ p.id }}/like"]'
+            aria-label="いいね">
+            <span class="icon">♥</span>
+            <span class="count">{{ p.hearts or 0 }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -151,3 +151,21 @@ document.addEventListener('click', async (e) => {
     initHearts();
   }
 })();
+
+async function refreshLikeCount(postId){
+  const res = await fetch(`/posts/${postId}/likes`, { cache: 'no-store' });
+  if(!res.ok) return;
+  const data = await res.json();
+  const el = document.querySelector(`#like-count-${postId}`);
+  if(el) el.textContent = data.likes;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const ids = Array.from(document.querySelectorAll('.like-count'))
+    .map(el => {
+      const m = el.id && el.id.match(/^like-count-(\d+)$/);
+      return m ? Number(m[1]) : null;
+    })
+    .filter(Boolean);
+  ids.forEach(id => refreshLikeCount(id));
+});

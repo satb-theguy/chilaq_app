@@ -34,15 +34,14 @@
       <div class="sticky-top" style="top:1rem">
 
         <div class="justify-content-end mb-3">
-  <button
-    class="heart-btn heart-off"
-    type="button"
-    data-post-id="{{ post.id }}"
-    data-like-endpoints='["/p/{{ post.id }}/like","/api/posts/{{ post.id }}/like"]'
-    aria-label="いいね">
-    <span class="icon">♥</span>
-    <span class="count">{{ post.hearts or 0 }}</span>
-  </button>
+  <button class="like-btn {{ 'liked' if request.cookies.get('liked_' ~ post.id|string) == '1' else '' }}"
+        id="like-btn-{{ post.id }}"
+        data-post-id="{{ post.id }}"
+        type="button"
+        onclick="likePost({{ post.id }})">
+  <span class="heart">♥</span>
+  <span class="like-count" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
+</button>
 </div>
         <div class="card p-3">
           <h6 class="fw-bold">Share</h6>

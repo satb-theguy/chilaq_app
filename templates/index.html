@@ -26,15 +26,14 @@
           </div>
 
           <!-- ❤ ハート：投稿詳細と同一の部品 -->
-          <button
-            class="heart-btn heart-off"
-            type="button"
-            data-post-id="{{ p.id }}"
-            data-like-endpoints='["/p/{{ p.id }}/like","/api/posts/{{ p.id }}/like"]'
-            aria-label="いいね">
-            <span class="icon">♥</span>
-            <span class="count">{{ p.hearts or 0 }}</span>
-          </button>
+          <button class="like-btn {{ 'liked' if request.cookies.get('liked_' ~ post.id|string) == '1' else '' }}"
+        id="like-btn-{{ post.id }}"
+        data-post-id="{{ post.id }}"
+        type="button"
+        onclick="likePost({{ post.id }})">
+  <span class="heart">♥</span>
+  <span class="like-count" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
+</button>
         </div>
       </div>
     </div>

@@ -24,7 +24,7 @@ from .utils import hash_password, verify_password
 # アプリ基本設定
 # =========================
 BASE_DIR = Path(__file__).parent
-app = FastAPI(title="Chilaq 🎵 — 音楽ディグ SNS (MVP)")
+app = FastAPI(title="Chilaq")
 
 # セッション (Cookie) — ログイン状態を保持
 # 👉 SECRET_KEY は Render 環境では環境変数に設定してください
@@ -195,16 +195,33 @@ def artist_page(slug: str, request: Request, db: Session = Depends(get_db)):
 
 
 @app.get("/about", response_class=HTMLResponse)
-def about(request: Request, db: Session = Depends(get_db)):
-    """Aboutページ用の簡易統計を出してテンプレに渡す。"""
-    artists = db.execute(select(func.count(Artist.id))).scalar() or 0
-    posts   = db.execute(select(func.count(Post.id)).where(Post.is_deleted == False)).scalar() or 0
-    likes   = db.execute(select(func.sum(Post.hearts)).where(Post.is_deleted == False)).scalar() or 0
-    stats = {"artists": artists, "posts": posts, "likes": likes or 0}
+def about_page(request: Request, db: Session = Depends(get_db)):
+    # 削除フラグが False の投稿のみを対象に集計
+    likes_total = db.scalar(
+        select(func.coalesce(func.sum(Post.likes), 0))
+        .where(Post.is_deleted == False)
+    )
+
+    posts_count = db.scalar(
+        select(func.count())
+        .select_from(Post)
+        .where(Post.is_deleted == False)
+    )
+
+    artists_count = db.scalar(
+        select(func.count(func.distinct(Post.artist_id)))
+        .select_from(Post)
+        .where(Post.is_deleted == False)
+    )
+
+    stats = {
+        "likes": int(likes_total or 0),
+        "posts": int(posts_count or 0),
+        "artists": int(artists_count or 0),
+    }
     return templates.TemplateResponse("about.html", {
         "request": request,
         "stats": stats,
-        "title": "About | Chilaq",
     })
 
 # =========================

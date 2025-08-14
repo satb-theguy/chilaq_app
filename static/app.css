@@ -1,15 +1,53 @@
-/* Minimal custom styles */
-.btn-like .heart{font-size:1.1rem; margin-right:.25rem}
-.card .ratio{background-image: linear-gradient(135deg, #e9ecef 25%, transparent 0, transparent 50%, #e9ecef 0, #e9ecef 75%, transparent 0, transparent); background-size:16px 16px}
-.btn-like.liked { pointer-events: none; opacity: .6; }
-/* Heart states (共通) */
-.heart-btn { 
-  display:inline-flex; align-items:center; gap:.35rem;
-  border:0; background:transparent; cursor:pointer;
-  padding:.25rem .5rem; border-radius:.5rem;
+/* =========================================================
+   Like Button — canonical styles (use class="like-btn")
+   ========================================================= */
+:root{
+  --like-pink:    #e91e63;   /* 押下時の文字色 */
+  --like-pink-bg: #ffe4ec;   /* 押下時の背景色 */
+  --like-gray:    #6b7280;   /* 未押下の文字色 */
+  --like-border:  #e5e7eb;   /* 未押下の枠線色 */
 }
-.heart-btn .icon { font-size:1.05rem; line-height:1; }
-.heart-btn.heart-on { color:#ec4899 !important; }   /* ピンク */
-.heart-btn.heart-off { color:#94a3b8 !important; }  /* グレー */
-.heart-btn:hover { background:rgba(148,163,184,.12); }
-.heart-btn[disabled] { opacity:.6; cursor:not-allowed; }
+
+button.like-btn,
+.like-btn{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 10px;                 /* カードでの標準サイズ */
+  border:1px solid var(--like-border);
+  border-radius:999px;
+  background:#fff;
+  color:var(--like-gray);
+  line-height:1;
+  font-weight:600;
+  cursor:pointer;
+  transition:all .15s ease;
+}
+
+.like-btn:hover{ background:#f8fafc; }
+
+.like-btn .heart{ font-size:14px; line-height:1; }
+.like-btn .count,
+.like-count{ font-size:14px; line-height:1; }  /* どちらのclass名でも数字が整う */
+
+/* 押した状態：枠線を消してピンクに */
+.like-btn.liked{
+  background:var(--like-pink-bg);
+  color:var(--like-pink);
+  border-color:transparent;         /* ← 外枠をなくす */
+}
+
+/* 無効化（連打防止など） */
+.like-btn:disabled{ opacity:.85; cursor:default; }
+
+/* 投稿詳細ページで少し大きくしたいときは class="like-btn like-btn-lg" を追加 */
+.like-btn.like-btn-lg{
+  padding:8px 16px;
+  font-size:.95rem;
+}
+
+/* Bootstrapの outline ボタンと併用時、liked で枠が残らないように */
+.like-btn.liked.btn-outline-secondary{ border-color:transparent !important; }
+
+/* ほんのりホバー影（好みで） */
+.like-btn:not(.liked):hover{ box-shadow:0 1px 3px rgba(16,24,40,.06); }

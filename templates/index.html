@@ -16,30 +16,23 @@
             <h5 class="card-title mb-1">
               {# タイトルが無い環境でもエラーにしない #}
               {% if post.title is defined and post.title %}
-                {{ post.title }}
+              <a href="/p/{{ post.id }}" class="card-title mb-1" style="text-decoration:none;">{{ post.title }}</a>
               {% else %}
                 Post #{{ post.id }}
               {% endif %}
             </h5>
             <p class="card-text text-muted mb-2">
               {% if post.artist is defined and post.artist and post.artist.name is defined %}
-                <a href="/artist/{{ post.artist.id }}">{{ post.artist.name }}</a>
+                <a href="/artist/{{ post.artist.id }}" class="card-text text-muted mb-2" style="text-decoration:none;">{{ post.artist.name }}</a>
               {% endif %}
             </p>
 
-            <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex justify-content-between">
               {# いいね：IDを post.id に紐付け（JSが更新できるように） #}
-              <button
-                class="btn btn-sm btn-outline-secondary like-btn {% if request.cookies.get('liked_' ~ post.id|string) == '1' %}liked{% endif %}"
-                id="like-btn-{{ post.id }}"
-                data-post-id="{{ post.id }}"
-                type="button"
-                onclick="likePost({{ post.id }})">
+              <button class="btn btn-sm btn-outline-secondary like-btn {% if request.cookies.get('liked_' ~ post.id|string) == '1' %}liked{% endif %}" id="like-btn-{{ post.id }}" data-post-id="{{ post.id }}" type="button" onclick="likePost({{ post.id }})">
                 <span class="heart">♥</span>
                 <span class="like-count ms-1" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
               </button>
-
-              <a href="/p/{{ post.id }}" class="btn btn-sm btn-primary">Open</a>
             </div>
           </div>
         </div>

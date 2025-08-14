@@ -34,15 +34,11 @@
       <div class="sticky-top" style="top:1rem">
 
         <div class="justify-content-end mb-3">
-  <button class="like-btn {{ 'liked' if request.cookies.get('liked_' ~ post.id|string) == '1' else '' }}"
-        id="like-btn-{{ post.id }}"
-        data-post-id="{{ post.id }}"
-        type="button"
-        onclick="likePost({{ post.id }})">
-  <span class="heart">♥</span>
-  <span class="like-count" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
-</button>
-</div>
+          <button class="like-btn {{ 'liked' if request.cookies.get('liked_' ~ post.id|string) == '1' else '' }}" id="like-btn-{{ post.id }}" data-post-id="{{ post.id }}" type="button" onclick="likePost({{ post.id }})">
+          <span class="heart">♥</span>
+          <span class="like-count" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
+        </button>
+        </div>
         <div class="card p-3">
           <h6 class="fw-bold">Share</h6>
           <a class="btn btn-outline-secondary btn-sm" href="https://x.com/intent/tweet?url={{ request.url }}">Post to X</a>

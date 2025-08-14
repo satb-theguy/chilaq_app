@@ -27,7 +27,7 @@
             <div class="text-muted small">アーティスト</div>
           </div>
           <div class="col-4">
-            <div class="fs-3 fw-bold">{{ stats.likes }}</div>
+            <div class="fs-3 fw-bold">{{ stats.likes | default(0) }}</div>
             <div class="text-muted small">ハート</div>
           </div>
         </div>

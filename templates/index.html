@@ -38,7 +38,7 @@
             </h5>
             <p class="card-text text-muted mb-2">
               {% if post.artist is defined and post.artist and post.artist.name is defined %}
-                <a href="/artist/{{ post.artist.id }}" class="card-text text-muted mb-2" style="text-decoration:none;">{{ post.artist.name }}</a>
+                <a href="/artist/{{ post.artist.slug }}" class="card-text text-muted mb-2" style="text-decoration:none;">{{ post.artist.name }}</a>
               {% endif %}
             </p>
 

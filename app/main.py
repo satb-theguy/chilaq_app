@@ -191,6 +191,7 @@ def artist_page(slug: str, request: Request, db: Session = Depends(get_db)):
         "request": request,
         "artist": artist,
         "posts": posts,
+        "thumb_of": resolve_thumbnail_for_post,
     })
 
 

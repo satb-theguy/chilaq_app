@@ -1,4 +1,11 @@
 {% extends "base.html" %}
+
+{% block title %}{{ artist.name }} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
+{% block description %}{{ artist.name }} の投稿一覧。スキされた曲から新しい出会いを。{% endblock %}
+{% block og_type %}profile{% endblock %}
+{# 任意：アーティスト画像があれば og_image を上書き #}
+{# {% block og_image %}{{ artist.image_url }}{% endblock %} #}
+
 {% block content %}
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h2 class="mb-0">{{ artist.name }}</h2>

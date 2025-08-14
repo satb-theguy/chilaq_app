@@ -443,10 +443,9 @@ def admin_artist_update(
     artist_id: int,
     request: Request,
     name: str = Form(...),
-    website: str | None = Form(None),
-    x_url: str | None = Form(None),          # X(Twitter)
-    spotify_url: str | None = Form(None),
-    bio: str | None = Form(None),
+    twitter: str | None = Form(None),
+    instagram: str | None = Form(None),
+    spotify: str | None = Form(None),
 ):
     require_admin(request)
     with SessionLocal() as db:
@@ -454,23 +453,23 @@ def admin_artist_update(
         if not artist:
             raise HTTPException(status_code=404, detail="artist not found")
 
-        # 必須：名前
         name = (name or "").strip()
         if not name:
             raise HTTPException(status_code=400, detail="name is required")
 
         artist.name = name
-        # 名前が変わったら slug も更新（models.py の slugify を利用）
-        artist.slug = slugify(name)
-        artist.website = (website or "").strip() or None
-        artist.x_url = (x_url or "").strip() or None
-        artist.spotify_url = (spotify_url or "").strip() or None
-        artist.bio = (bio or "").strip() or None
+        artist.slug = slugify(name)  # unique 衝突の可能性あり
+        artist.twitter = (twitter or "").strip() or None
+        artist.instagram = (instagram or "").strip() or None
+        artist.spotify = (spotify or "").strip() or None
 
-        db.add(artist)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as e:
+            db.rollback()
+            # 既存の name/slug と重複したときの簡易メッセージ
+            raise HTTPException(status_code=400, detail="name/slug が既に存在する可能性があります。別名で保存してください。")
 
-    # 一覧に戻す（既存の一覧ルート名が別なら合わせて変更）
     return RedirectResponse(url=request.url_for("admin_artists"), status_code=303)
 
 # =========================

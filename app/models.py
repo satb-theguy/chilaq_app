@@ -9,6 +9,7 @@ from sqlalchemy import String, Integer, Text, Boolean, ForeignKey, DateTime
 from datetime import datetime
 from .db import Base
 import re, unicodedata
+from typing import Optional, List
 
 def slugify(s: str) -> str:
     """雑なスラッグ生成（日本語もOKだが簡易）。"""
@@ -31,23 +32,27 @@ class Artist(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     slug: Mapped[str] = mapped_column(String(200), unique=True, index=True)
-    twitter: Mapped[str | None] = mapped_column(String(255), default=None)
-    instagram: Mapped[str | None] = mapped_column(String(255), default=None)
-    spotify: Mapped[str | None] = mapped_column(String(255), default=None)
-    # 所有ユーザー（招待されたアーティストのログイン主体）
-    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    owner: Mapped[User | None] = relationship("User", back_populates="artists")
 
-    posts: Mapped[list[Post]] = relationship("Post", back_populates="artist", cascade="all,delete", passive_deletes=True)
+    # ここを Optional[...] に統一（nullable=True も付けるとスキーマ意図が明確）
+    twitter: Mapped[Optional[str]]   = mapped_column(String(255), nullable=True, default=None)
+    instagram: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, default=None)
+    spotify: Mapped[Optional[str]]   = mapped_column(String(255), nullable=True, default=None)
+
+    owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    owner: Mapped[Optional["User"]] = relationship("User", back_populates="artists")
+
+    posts: Mapped[List["Post"]] = relationship(
+        "Post", back_populates="artist", cascade="all,delete", passive_deletes=True
+    )
 
 class Post(Base):
     __tablename__ = "posts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(200), index=True)  # 曲名
     artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), index=True)
-    url_youtube: Mapped[str | None] = mapped_column(Text, default=None)
-    url_spotify: Mapped[str | None] = mapped_column(Text, default=None)
-    url_apple: Mapped[str | None] = mapped_column(Text, default=None)
+    url_youtube: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    url_spotify: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    url_apple: Mapped[Optional[str]] = mapped_column(Text, default=None)
     hearts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)

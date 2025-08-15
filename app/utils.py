@@ -168,3 +168,33 @@ def resolve_thumbnail_for_post(post) -> str:
             return img
     # ローカルのプレースホルダ
     return "/static/placeholder.svg"
+
+def thumb_of(post):
+    return resolve_thumbnail_for_post(post)
+
+# app/utils.py
+from urllib.parse import urlparse, urljoin
+
+def absolutize_url(request, url: str | None) -> str:
+    """
+    OGP向けに、相対URL/アプリ内パスを絶対URLに変換する。
+    - 既に http(s) ならそのまま返す
+    - /static/... や static/... は url_for('static', ...) で絶対化
+    - それ以外の相対は base_url と結合
+    - None や空はデフォルトの OGP 画像を返す
+    """
+    if not url:
+        return str(request.url_for("static", path="og-default.jpg"))
+
+    p = urlparse(url)
+    if p.scheme in ("http", "https"):
+        return url
+
+    # /static/... → url_for でホスト名付きに
+    if url.startswith("/static/"):
+        return str(request.url_for("static", path=url.removeprefix("/static/")))
+    if url.startswith("static/"):
+        return str(request.url_for("static", path=url.removeprefix("static/")))
+
+    # それ以外の相対パス → base_url と結合
+    return urljoin(str(request.base_url), url)

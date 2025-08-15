@@ -18,7 +18,13 @@ from sqlalchemy.exc import IntegrityError
 
 from .db import Base, engine, get_db, SessionLocal
 from .models import User, Artist, Post, slugify
-from .utils import hash_password, verify_password
+from .utils import hash_password, verify_password, thumb_of, absolutize_url
+
+try:
+    from .utils import youtube_embed, spotify_embed, apple_embed, resolve_thumbnail_for_post
+except ImportError:
+    # もし utils 側の関数名が apple_music_embed の場合に備える
+    from .utils import youtube_embed, spotify_embed, apple_music_embed as apple_embed, resolve_thumbnail_for_post
 
 # =========================
 # アプリ基本設定
@@ -38,6 +44,8 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "../templates"))
 # ログ
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("chilaq")
+
+templates.env.globals["thumb_of"] = thumb_of
 
 def get_db():
     db = SessionLocal()
@@ -146,38 +154,38 @@ def index(request: Request, db: Session = Depends(get_db)):
     resp.headers["Expires"] = "0"
     return resp
 
+
+from fastapi import Depends
+
 @app.get("/p/{post_id}", response_class=HTMLResponse)
 def post_detail(post_id: int, request: Request, db: Session = Depends(get_db)):
-    """
-    投稿の詳細ページ。
-    - DBから該当の Post を取得
-    - 各サービス用の埋め込みURLを生成
-    - Appleは高さも一緒にテンプレへ渡す（曲=175px、アルバム/プレイリスト=450px）
-    """
+    """投稿の詳細ページ：各サービスの埋め込みURLを作ってテンプレに渡す"""
     post = db.get(Post, post_id)
-    if not post or post.is_deleted:
+    if not post or getattr(post, "is_deleted", False):
         raise HTTPException(404, "post_not_found")
 
-    # 1) 各サービスの埋め込みURLを生成（utils側で正規化）
-    yt_src = youtube_embed(post.url_youtube)     # 例: "https://www.youtube.com/embed/xxxx" or None
-    sp_src = spotify_embed(post.url_spotify)     # 例: "https://open.spotify.com/embed/track/..." or None
-    am_src, am_h = apple_embed(post.url_apple)   # 例: ("https://embed.music.apple.com/..", 175/450) or (None, None)
+    # ---- 埋め込みURLを作る（None になることも想定）----
+    yt = youtube_embed(getattr(post, "url_youtube", None))
+    sp = spotify_embed(getattr(post, "url_spotify", None))
+    am_url, am_h = apple_embed(getattr(post, "url_apple", None))  # (url, height) を想定
 
-    # 2) テンプレに渡す辞書を組み立て
     embeds = {
-        "youtube": yt_src,       # <iframe src="{{ embeds.youtube }}"> で使う
-        "spotify": sp_src,       # <iframe src="{{ embeds.spotify }}"> で使う
-        "apple": am_src,         # <iframe src="{{ embeds.apple   }}"> で使う
-        "apple_h": am_h or 450,  # 高さ。None のときの保険として 450 を既定に
+        "youtube": yt,
+        "spotify": sp,
+        "apple":   am_url,
+        "apple_h": am_h or 450,   # 高さが未判定なら既定 450
     }
 
-    # 3) テンプレへ渡す
+    # OGP/サムネ用（YouTube/Spotify/Appleの順で解決する実装を想定）
+    og_image_url = resolve_thumbnail_for_post(post)
+
     return templates.TemplateResponse(
         "post_detail.html",
         {
-            "request": request,  # Jinja2 のお作法：必ず request を渡す
-            "post": post,        # タイトル、アーティスト表示などで利用
-            "embeds": embeds,    # 上で作った埋め込み情報
+            "request": request,
+            "post": post,
+            "embeds": embeds,
+            "og_image_url": og_image_url,
         },
     )
 

@@ -3,7 +3,7 @@
 {% block title %}{{ post.title }} / {{ post.artist.name }} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
 {% block description %}{{ post.artist.name }} の投稿。新しい音楽発見は Chilaq で。{% endblock %}
 {% block og_type %}article{% endblock %}
-{% block og_image %}{{ thumb_of(post) }}{% endblock %}
+{% block og_image %}{{ og_image_url }}{% endblock %}
 {# thumb_of(post) が絶対URLを返す実装だと望ましい。もし相対の場合はサーバ側で絶対化するか、ここで request.url_for を使う #}
 
 {% block content %}
@@ -28,7 +28,7 @@
         <iframe
           src="{{ embeds.apple }}"
           width="100%"
-          height="{{ embeds.apple_h or 450 }}"
+          height="{{ embeds.apple_h }}"
           style="border-radius:12px; overflow:hidden; background:transparent;"
           frameborder="0"
           loading="lazy"

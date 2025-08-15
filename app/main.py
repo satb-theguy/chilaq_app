@@ -1,165 +1,243 @@
+# app/main.py
 from __future__ import annotations
+
+import os
+import logging
+import time
 from pathlib import Path
-import os, random, logging, time, importlib.metadata
 from typing import Optional
 
-from app.utils import youtube_embed, spotify_embed, apple_embed, resolve_thumbnail_for_post
-
-from fastapi import FastAPI, Request, Response, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, Request, HTTPException, Depends, Form
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.responses import RedirectResponse
+
+from sqlalchemy import select, func, text, inspect
+from sqlalchemy.orm import Session
+
 from starlette.middleware.sessions import SessionMiddleware
+import secrets
 
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import select, func, desc, inspect, text
-from sqlalchemy.exc import IntegrityError
-
-from .db import Base, engine, get_db, SessionLocal
-from .models import User, Artist, Post, slugify
-from .utils import hash_password, verify_password, thumb_of, absolutize_url
-
+# --- アプリ内 ---
+# DB: engine / SessionLocal / get_db は既存の app.db にある想定
 try:
-    from .utils import youtube_embed, spotify_embed, apple_embed, resolve_thumbnail_for_post
+    from .db import engine, SessionLocal, get_db
+except Exception:
+    # もし app.db に get_db がなければ簡易定義（通常は不要）
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy import create_engine as _create_engine
+
+    _url = os.environ.get("DATABASE_URL", "")
+    if _url and _url.startswith("postgres://"):
+        _url = _url.replace("postgres://", "postgresql+psycopg://", 1)
+    engine = _create_engine(_url) if _url else None
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def get_db():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+from .models import Base, User, Artist, Post  # type: ignore
+
+# 埋め込みやサムネ解決ユーティリティ
+try:
+    from .utils import (
+        hash_password,
+        verify_password,
+        youtube_embed,
+        spotify_embed,
+        apple_embed,                   # (url, height) を返す想定
+        resolve_thumbnail_for_post,    # Post -> 画像URL
+        thumb_of,                      # テンプレから呼ぶヘルパ
+    )
 except ImportError:
-    # もし utils 側の関数名が apple_music_embed の場合に備える
-    from .utils import youtube_embed, spotify_embed, apple_music_embed as apple_embed, resolve_thumbnail_for_post
+    # 互換: apple_music_embed という名前の環境向けフォールバック
+    from .utils import (
+        hash_password,
+        verify_password,
+        youtube_embed,
+        spotify_embed,
+        apple_music_embed as apple_embed,
+        resolve_thumbnail_for_post,
+        thumb_of,
+    )
 
-# =========================
-# アプリ基本設定
-# =========================
-BASE_DIR = Path(__file__).parent
-app = FastAPI(title="Chilaq")
+# ------------------------------------------------------------------------------
+# 基本セットアップ
+# ------------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
 
-# セッション (Cookie) — ログイン状態を保持
-# 👉 SECRET_KEY は Render 環境では環境変数に設定してください
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, session_cookie="chilaq_sess", https_only=False)
+app = FastAPI(title="chilaq API")
 
-# 静的ファイル / テンプレート
-app.mount("/static", StaticFiles(directory=BASE_DIR / "../static"), name="static")
-templates = Jinja2Templates(directory=str(BASE_DIR / "../templates"))
+from starlette.middleware.sessions import SessionMiddleware
+import secrets
 
-# ログ
+# --- Session (cookieベースのサーバーサイドセッション) ---
+SESSION_SECRET = os.environ.get("SESSION_SECRET") or secrets.token_urlsafe(32)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    session_cookie="chilaq_session",
+    same_site="lax",
+    https_only=False,          # 本番(https)では True 推奨（Render では True にしてOK）
+    max_age=60*60*24*30,       # 30日
+)
+
+# /static をマウント（CSS/JS/画像など）
+app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "static"), name="static")
+
+# テンプレート（HTML）
+templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
+# テンプレから thumb_of(post) を直接呼べるようにする
+templates.env.globals["thumb_of"] = thumb_of
+
+# --- CORS（環境変数 ALLOW_ORIGINS にカンマ区切りで指定）
+_raw = os.environ.get("ALLOW_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _raw.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS or [],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
+
+# --- Security headers ---
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    resp.headers["Strict-Transport-Security"] = "max-age=15552000; includeSubDomains; preload"
+    return resp
+
+import uuid
+
+# --- Logging ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("chilaq")
 
-templates.env.globals["thumb_of"] = thumb_of
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-def _like_post_core(db: Session, post_id: int, request: Request, response: Response):
-    post = db.get(Post, post_id)
-    if not post:
-        raise HTTPException(status_code=404, detail="post not found")
-
-    # likes が None の旧データに備えて 0 を保証
-    post.likes = int(post.likes or 0)
-
-    # 同一ブラウザの二重加算ガード（クッキー）
-    already = request.cookies.get(f"liked_{post_id}") == "1"
-    if not already:
-        post.likes += 1
-        db.add(post)
-        db.commit()
-        # ローカルHTTPでも動くよう secure 判定を自動化
-        response.set_cookie(
-            key=f"liked_{post_id}", value="1",
-            max_age=60*60*24*365*5,  # 5年
-            httponly=False, samesite="Lax",
-            secure=(request.url.scheme == "https")
-        )
-    return {"likes": post.likes, "liked": True}
-
-# =========================
-# ヘルパ：現在のユーザー
-# =========================
-def current_user(request: Request, db: Session) -> Optional[User]:
-    """セッションから user_id を読み、DB からユーザーを取得します。"""
-    uid = request.session.get("user_id")
-    if not uid: return None
-    return db.get(User, uid)
-
-def require_login(request: Request, db: Session) -> User:
-    user = current_user(request, db)
-    if not user:
-        raise HTTPException(status_code=401, detail="login_required")
-    return user
-
-
-# =========================
-# 初期化：テーブル作成 & ダミーデータ
-# =========================
-@app.on_event("startup")
-def on_startup():
-    if not engine:
-        logger.warning("DATABASE_URL not set")
-        return
-
-    # 既存テーブルが無ければ作成（初回用）
-    Base.metadata.create_all(engine)
-    logger.info("tables ensured")
-
-    # posts.likes が無ければ追加（SQLite/PG 対応）
-    try:
-        insp = inspect(engine)
-        if "posts" in insp.get_table_names():
-            cols = {c["name"] for c in insp.get_columns("posts")}
-            if "likes" not in cols:
-                logger.info("adding posts.likes column...")
-                with engine.begin() as conn:
-                    if engine.dialect.name.startswith("postgre"):
-                        conn.execute(text(
-                            "ALTER TABLE posts ADD COLUMN IF NOT EXISTS likes INTEGER NOT NULL DEFAULT 0"
-                        ))
-                    else:
-                        # SQLite は IF NOT EXISTS が使えない
-                        conn.execute(text(
-                            "ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0"
-                        ))
-                logger.info("posts.likes added")
-    except Exception:
-        logger.exception("failed to ensure posts.likes column")
-
-
-# =========================
-# 公開ページ
-# =========================
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request, db: Session = Depends(get_db)):
-    # 公開フィード用の投稿を取得（削除除外）
-    posts = db.scalars(
-        select(Post)
-        .where(Post.is_deleted == False)
-        .order_by(Post.created_at.desc())
-        .limit(30)
-    ).all()
-
-    logger.info(f"INDEX: fetched {len(posts)} posts from DB")
-
-    # テンプレに posts を渡す。サムネは関数を渡してテンプレ側で thumb_of(post) として使用
-    resp = templates.TemplateResponse(
-        "index.html",
-        {"request": request, "posts": posts, "thumb_of": resolve_thumbnail_for_post},
-    )
-    # 初期描画の数字が古くならないようキャッシュ無効
-    resp.headers["Cache-Control"] = "no-store"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
+@app.middleware("http")
+async def request_id_mw(request: Request, call_next):
+    # 既にあれば尊重、無ければ発行
+    rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    request.state.request_id = rid
+    resp = await call_next(request)
+    resp.headers["X-Request-ID"] = rid
+    # クライアントJSから参照したい場合に備えて露出（必要なければ外してもOK）
+    resp.headers.setdefault("Access-Control-Expose-Headers", "X-Request-ID")
     return resp
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    try:
+        resp = await call_next(request)
+        status = resp.status_code
+    except Exception:
+        status = 500
+        raise
+    finally:
+        ms = (time.time() - start) * 1000
+        rid = getattr(request.state, "request_id", "-")
+        ua = request.headers.get("user-agent", "-")
+        ip = request.client.host if request.client else "-"
+        logger.info(
+            f'rid={rid} {request.method} {request.url.path} {status} {ms:.1f}ms ip="{ip}" ua="{ua}"'
+        )
+    return resp
 
-from fastapi import Depends
+# --- Error handlers ---
+@app.exception_handler(HTTPException)
+async def http_exc_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail, "status_code": exc.status_code, "path": request.url.path},
+    )
 
+@app.exception_handler(Exception)
+async def unhandled_exc_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error")
+    return JSONResponse(status_code=500, content={"error": "internal_error", "message": "Something went wrong."})
+
+# ------------------------------------------------------------------------------
+# Step 2 の要点：likes/hearts の表記ゆれを likes に統一
+# 起動時に likes 列を保証し、必要なら hearts→likes バックフィル
+# ------------------------------------------------------------------------------
+def ensure_likes_column_and_backfill():
+    """posts.likes を“正”として保証。hearts があれば likes に取り込む。"""
+    if not engine:
+        return
+    insp = inspect(engine)
+    try:
+        cols = {c["name"] for c in insp.get_columns("posts")}
+    except Exception:
+        cols = set()
+
+    with engine.begin() as conn:
+        if "likes" not in cols:
+            # SQLite/PG 共通で通るシンプルな追加
+            conn.execute(text("ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0"))
+        # hearts から likes へバックフィル（likes が未セット or 0 のものを対象）
+        if "hearts" in cols:
+            conn.execute(
+                text(
+                    """
+                    UPDATE posts
+                       SET likes = COALESCE(NULLIF(likes, 0), hearts, 0)
+                     WHERE likes IS NULL OR likes = 0
+                    """
+                )
+            )
+
+# --- DB: テーブル作成（初回用）＋ likes バックフィル ---
+@app.on_event("startup")
+def on_startup():
+    if engine:
+        Base.metadata.create_all(engine)
+        ensure_likes_column_and_backfill()
+        logger.info("tables ensured & likes backfilled")
+    else:
+        logger.warning("DATABASE_URL not set")
+
+# ------------------------------------------------------------------------------
+# 基本ルート
+# ------------------------------------------------------------------------------
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+# トップページ：公開フィード（削除済みは除外）
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request, db: Session = Depends(get_db)):
+    posts = (
+        db.execute(
+            select(Post).where(getattr(Post, "is_deleted", False) == False)  # noqa: E712
+            .order_by(getattr(Post, "created_at", Post.id).desc())
+            .limit(30)
+        )
+        .scalars()
+        .all()
+    )
+    # テンプレでは posts をループし、thumb は {{ thumb_of(post) }} で取得
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "posts": posts,
+            # OGP/タイトルは base.html 側のデフォルトでOK（必要なら page_title を渡す）
+        },
+    )
+
+# 投稿詳細
 @app.get("/p/{post_id}", response_class=HTMLResponse)
 def post_detail(post_id: int, request: Request, db: Session = Depends(get_db)):
-    """投稿詳細：埋め込みURLを作ってテンプレへ渡す"""
     post = db.get(Post, post_id)
     if not post or getattr(post, "is_deleted", False):
         raise HTTPException(404, "post_not_found")
@@ -171,7 +249,7 @@ def post_detail(post_id: int, request: Request, db: Session = Depends(get_db)):
     embeds = {
         "youtube": yt,
         "spotify": sp,
-        "apple":   am_url,
+        "apple": am_url,
         "apple_h": am_h or 450,
     }
     og_image_url = resolve_thumbnail_for_post(post)
@@ -183,534 +261,105 @@ def post_detail(post_id: int, request: Request, db: Session = Depends(get_db)):
             "post": post,
             "embeds": embeds,
             "og_image_url": og_image_url,
+            # ページタイトル/OGPはテンプレ側ブロックで生成
         },
     )
 
-@app.get("/artist/{slug}", response_class=HTMLResponse)
-def artist_page(slug: str, request: Request, db: Session = Depends(get_db)):
-    artist = db.execute(select(Artist).where(Artist.slug == slug)).scalar_one_or_none()
-    if not artist:
-        raise HTTPException(404, "artist_not_found")
-    posts = db.execute(select(Post).where(Post.artist_id == artist.id, Post.is_deleted == False).order_by(desc(Post.created_at))).scalars().all()
-    return templates.TemplateResponse("artist.html", {
-        "request": request,
-        "artist": artist,
-        "posts": posts,
-        "thumb_of": resolve_thumbnail_for_post,
-    })
-
-
-@app.get("/about", response_class=HTMLResponse)
-def about_page(request: Request, db: Session = Depends(get_db)):
-    # 削除フラグが False の投稿のみを対象に集計
-    likes_total = db.scalar(
-        select(func.coalesce(func.sum(Post.likes), 0))
-        .where(Post.is_deleted == False)
-    )
-
-    posts_count = db.scalar(
-        select(func.count())
-        .select_from(Post)
-        .where(Post.is_deleted == False)
-    )
-
-    artists_count = db.scalar(
-        select(func.count(func.distinct(Post.artist_id)))
-        .select_from(Post)
-        .where(Post.is_deleted == False)
-    )
-
-    stats = {
-        "likes": int(likes_total or 0),
-        "posts": int(posts_count or 0),
-        "artists": int(artists_count or 0),
-    }
-    return templates.TemplateResponse("about.html", {
-        "request": request,
-        "stats": stats,
-    })
-
-# =========================
-# いいね(♥) — 認証不要の簡易 API
-# =========================
-@app.post("/api/like/{post_id}")
-def api_like(post_id: int, request: Request, db: Session = Depends(get_db)):
+# ------------------------------------------------------------------------------
+# Like API（likes に統一）
+# フロントJSは .like-btn[data-post-id] を使い、POST すると JSON {"liked": true, "likes": int}
+# カウント取得は GET /posts/{id}/likes -> {"post_id": id, "likes": int}
+# ------------------------------------------------------------------------------
+def _inc_like(db: Session, post_id: int) -> Post:
     post = db.get(Post, post_id)
-    if not post or post.is_deleted:
+    if not post or getattr(post, "is_deleted", False):
         raise HTTPException(404, "post_not_found")
-
-    # --- 連打レート制限（1.5秒） ---
-    now = time.time()
-    last_ts = request.session.get("last_like_ts", 0)
-    if now - last_ts < 1.5:
-        return {"ok": False, "reason": "rate_limited", "hearts": post.hearts, "liked": False}
-
-    # --- 1投稿1回ルール（セッション） ---
-    liked_posts = set(request.session.get("liked_posts", []))
-    if post_id in liked_posts:
-        # 既にいいね済み → カウントは増やさない
-        request.session["last_like_ts"] = now
-        return {"ok": False, "reason": "already_liked", "hearts": post.hearts, "liked": True}
-
-    # まだなら加算＆記録
-    post.hearts += 1
+    post.likes = (post.likes or 0) + 1
+    db.add(post)
     db.commit()
-    liked_posts.add(post_id)
-    request.session["liked_posts"] = list(liked_posts)
-    request.session["last_like_ts"] = now
+    db.refresh(post)
+    return post
 
-    return {"ok": True, "hearts": post.hearts, "liked": True}
+@app.post("/p/{post_id}/like")
+def like_post_legacy(post_id: int, request: Request, db: Session = Depends(get_db)):
+    """後方互換：投稿詳細で使っていたレガシーURL。likes を返す。"""
+    post = _inc_like(db, post_id)
+    return {"liked": True, "likes": post.likes}
 
+from fastapi.responses import JSONResponse
 
-@app.post("/posts/{post_id}/like", name="like_post")
-def like_post(post_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
-    return _like_post_core(db, post_id, request, response)
+def _like_core(post_id: int, request: Request, db: Session) -> JSONResponse:
+    rid = getattr(request.state, "request_id", "-")
+    try:
+        post = db.get(Post, post_id)
+        if not post or post.is_deleted:
+            return JSONResponse({"ok": False, "liked": False, "hearts": 0, "post_id": post_id}, status_code=404)
 
-# 互換：/api/posts/{id}/like
-@app.post("/api/posts/{post_id}/like", include_in_schema=False)
-def like_post_api(post_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
-    return _like_post_core(db, post_id, request, response)
+        # 既にCookieがあれば再加算しない（UI 側の連打もここで抑止）
+        cookie_key = f"liked_{post_id}"
+        already = request.cookies.get(cookie_key) == "1"
 
-# 互換：/p/{id}/like
-@app.post("/p/{post_id}/like", include_in_schema=False)
-def like_post_short(post_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
-    return _like_post_core(db, post_id, request, response)
-
-
-# =========================
-# ログイン / ログアウト
-# =========================
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
-
-@app.post("/login")
-def do_login(request: Request, db: Session = Depends(get_db), email: str = Form(...), password: str = Form(...)):
-    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-    if not user or not verify_password(password, user.password_hash):
-        return templates.TemplateResponse("login.html", {"request": request, "error": "メールまたはパスワードが違います"}, status_code=400)
-    request.session["user_id"] = user.id
-    request.session["is_admin"] = bool(user.is_admin)
-    return RedirectResponse(url="/dashboard", status_code=302)
-
-@app.get("/logout")
-def do_logout(request: Request):
-    request.session.clear()
-    return RedirectResponse(url="/", status_code=302)
-
-
-# =========================
-# ダッシュボード（招待アーティスト / 管理）
-# =========================
-@app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db)):
-    user = current_user(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
-
-    if user.is_admin:
-        total_hearts = db.execute(
-            select(func.sum(Post.hearts)).where(Post.is_deleted == False)
-        ).scalar() or 0
-        my_posts_count = db.execute(
-            select(func.count(Post.id)).where(Post.is_deleted == False)
-        ).scalar() or 0
-    else:
-        artist_ids = [a.id for a in user.artists]
-        if artist_ids:
-            cond = (Post.is_deleted == False, Post.artist_id.in_(artist_ids))
-            total_hearts = db.execute(
-                select(func.sum(Post.hearts)).where(*cond)
-            ).scalar() or 0
-            my_posts_count = db.execute(
-                select(func.count(Post.id)).where(*cond)
-            ).scalar() or 0
-        else:
-            total_hearts = 0
-            my_posts_count = 0
-
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "user": user,
-        "total_hearts": total_hearts,
-        "my_posts_count": my_posts_count
-    })
-
-@app.get("/dashboard/posts", response_class=HTMLResponse)
-def dashboard_posts(request: Request, db: Session = Depends(get_db)):
-    user = require_login(request, db)
-
-    q = select(Post).where(Post.is_deleted == False).options(joinedload(Post.artist)).order_by(desc(Post.created_at))
-    if not user.is_admin:
-        artist_ids = [a.id for a in user.artists]
-        if artist_ids:
-            q = q.where(Post.artist_id.in_(artist_ids))
-        else:
-            q = q.where(Post.id == -1)  # 所有なし→空
-
-    posts = db.execute(q).scalars().all()
-    return templates.TemplateResponse("dashboard_posts.html", {"request": request, "user": user, "posts": posts})
-
-@app.post("/dashboard/posts/{post_id}/delete")
-def dashboard_delete_post(post_id: int, request: Request, db: Session = Depends(get_db)):
-    user = require_login(request, db)
-    post = db.get(Post, post_id)
-    if not post:
-        raise HTTPException(404, "post_not_found")
-    if not user.is_admin:
-        # 所有アーティストの投稿のみ削除可
-        if post.artist_id not in [a.id for a in user.artists]:
-            raise HTTPException(403, "forbidden")
-    post.is_deleted = True
-    db.commit()
-    return RedirectResponse(url="/dashboard/posts", status_code=302)
-
-@app.get("/dashboard/new", response_class=HTMLResponse)
-def dashboard_new(request: Request, db: Session = Depends(get_db)):
-    user = require_login(request, db)
-    # 管理者は全アーティストに代理投稿可能。一般は自分のアーティストのみ。
-    artists = db.execute(select(Artist) if user.is_admin else select(Artist).where(Artist.owner_id == user.id)).scalars().all()
-    return templates.TemplateResponse("dashboard_new.html", {"request": request, "user": user, "artists": artists})
-
-@app.post("/dashboard/new")
-def dashboard_create_post(
-    request: Request, db: Session = Depends(get_db),
-    title: str = Form(...), artist_id: int = Form(...),
-    url_youtube: str = Form(None), url_spotify: str = Form(None), url_apple: str = Form(None),
-):
-    user = require_login(request, db)
-    artist = db.get(Artist, artist_id)
-    if not artist:
-        raise HTTPException(400, "artist_not_found")
-    if not user.is_admin and artist.owner_id != user.id:
-        raise HTTPException(403, "forbidden")
-    p = Post(title=title.strip(), artist_id=artist.id,
-             url_youtube=(url_youtube or None),
-             url_spotify=(url_spotify or None),
-             url_apple=(url_apple or None))
-    db.add(p); db.commit()
-    return RedirectResponse(url=f"/p/{p.id}", status_code=302)
-
-
-# =========================
-# 管理：アーティスト管理（作成・紐づけ）
-# =========================
-@app.get("/admin/artists", response_class=HTMLResponse)
-def admin_artists(request: Request, db: Session = Depends(get_db)):
-    user = require_login(request, db)
-    if not user.is_admin:
-        raise HTTPException(403, "forbidden")
-    artists = db.execute(select(Artist).order_by(Artist.name)).scalars().all()
-    users = db.execute(select(User).order_by(User.email)).scalars().all()
-    return templates.TemplateResponse("admin_artists.html", {"request": request, "artists": artists, "users": users})
-
-@app.post("/admin/artists/create")
-def admin_create_artist(request: Request, db: Session = Depends(get_db), name: str = Form(...)):
-    user = require_login(request, db)
-    if not user.is_admin:
-        raise HTTPException(403, "forbidden")
-    name = name.strip()
-    if not name:
-        raise HTTPException(400, "name_required")
-    artist = Artist(name=name, slug=slugify(name))
-    db.add(artist); db.commit()
-    return RedirectResponse(url="/admin/artists", status_code=302)
-
-@app.post("/admin/artists/link")
-def admin_link_artist(request: Request, db: Session = Depends(get_db), artist_id: int = Form(...), user_id: int = Form(...)):
-    user = require_login(request, db)
-    if not user.is_admin:
-        raise HTTPException(403, "forbidden")
-    artist = db.get(Artist, artist_id)
-    target = db.get(User, user_id)
-    if not artist or not target:
-        raise HTTPException(400, "not_found")
-    artist.owner_id = target.id
-    db.commit()
-    return RedirectResponse(url="/admin/artists", status_code=302)
-
-# --- Artist: 編集ページ 表示 ---
-@app.get("/admin/artists/{artist_id}/edit", name="admin_artist_edit_page")
-def admin_artist_edit_page(artist_id: int, request: Request):
-    require_admin(request)
-    with SessionLocal() as db:
-        artist = db.get(Artist, artist_id)
-        if not artist:
-            raise HTTPException(status_code=404, detail="artist not found")
-    return templates.TemplateResponse("artist_edit.html", {
-        "request": request,
-        "title": "アーティスト編集",
-        "artist": artist,
-    })
-
-# --- Artist: 更新保存 ---
-@app.post("/admin/artists/{artist_id}/edit", name="admin_artist_update")
-def admin_artist_update(
-    artist_id: int,
-    request: Request,
-    name: str = Form(...),
-    twitter: str | None = Form(None),
-    instagram: str | None = Form(None),
-    spotify: str | None = Form(None),
-):
-    require_admin(request)
-    with SessionLocal() as db:
-        artist = db.get(Artist, artist_id)
-        if not artist:
-            raise HTTPException(status_code=404, detail="artist not found")
-
-        name = (name or "").strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="name is required")
-
-        artist.name = name
-        artist.slug = slugify(name)  # unique 衝突の可能性あり
-        artist.twitter = (twitter or "").strip() or None
-        artist.instagram = (instagram or "").strip() or None
-        artist.spotify = (spotify or "").strip() or None
-
-        try:
+        if not already:
+            post.likes = (post.likes or 0) + 1
+            db.add(post)
             db.commit()
-        except IntegrityError as e:
-            db.rollback()
-            # 既存の name/slug と重複したときの簡易メッセージ
-            raise HTTPException(status_code=400, detail="name/slug が既に存在する可能性があります。別名で保存してください。")
+            liked_now = True
+        else:
+            liked_now = True  # 既にLike済みという扱い
 
-    return RedirectResponse(url=request.url_for("admin_artists"), status_code=303)
-
-# =========================
-# 投稿の編集（所有 or 管理者）
-# =========================
-from fastapi import Form  # 既にインポート済みなら重複OK
-
-@app.get("/dashboard/posts/{post_id}/edit", response_class=HTMLResponse)
-def edit_post_page(post_id: int, request: Request, db: Session = Depends(get_db)):
-    user = require_login(request, db)  # ログイン必須
-    post = db.get(Post, post_id)       # 編集対象の投稿データ
-    if not post or post.is_deleted:
-        raise HTTPException(404, "post_not_found")
-    # 権限: 管理者 or 自分がオーナーのアーティストの投稿
-    if (not user.is_admin) and (post.artist_id not in [a.id for a in user.artists]):
-        raise HTTPException(403, "forbidden")
-    return templates.TemplateResponse(
-        "dashboard_post_edit.html",
-        {"request": request, "user": user, "post": post}
-    )
-
-@app.post("/dashboard/posts/{post_id}/edit")
-def edit_post(
-    post_id: int, request: Request, db: Session = Depends(get_db),
-    title: str = Form(...),
-    url_youtube: str = Form(None),
-    url_spotify: str = Form(None),
-    url_apple: str = Form(None),
-):
-    user = require_login(request, db)
-    post = db.get(Post, post_id)
-    if not post or post.is_deleted:
-        raise HTTPException(404, "post_not_found")
-    if (not user.is_admin) and (post.artist_id not in [a.id for a in user.artists]):
-        raise HTTPException(403, "forbidden")
-    # 保存（入力→DB）
-    post.title = title.strip()
-    post.url_youtube = (url_youtube or None)
-    post.url_spotify = (url_spotify or None)
-    post.url_apple = (url_apple or None)
-    db.commit()
-    return RedirectResponse(url=f"/p/{post.id}", status_code=302)
-
-
-# =========================
-# アーティスト情報の編集
-# - 管理者: すべてのアーティストを編集 & 所有ユーザーの再割当が可能
-# - 一般ユーザー: 自分が owner のアーティストのみ編集可（名前・SNSリンク）
-# =========================
-@app.get("/admin/users/{user_id}/password", response_class=HTMLResponse)
-def admin_user_password_page(user_id: int, request: Request, db: Session = Depends(get_db)):
-    me = require_login(request, db)
-    if not me.is_admin:
-        raise HTTPException(403, "forbidden")
-    target = db.get(User, user_id)
-    if not target:
-        raise HTTPException(404, "user_not_found")
-    return templates.TemplateResponse("admin_user_password.html", {
-        "request": request,
-        "user": me,        # 現在ログイン中
-        "target": target,  # 対象ユーザー
-        "error": None
-    })
-
-@app.post("/admin/users/{user_id}/password")
-def admin_user_password(
-    user_id: int, request: Request, db: Session = Depends(get_db),
-    password: str = Form(...), password2: str = Form(...)
-):
-    me = require_login(request, db)
-    if not me.is_admin:
-        raise HTTPException(403, "forbidden")
-    target = db.get(User, user_id)
-    if not target:
-        raise HTTPException(404, "user_not_found")
-
-    pwd = password.strip()
-    if pwd != password2:
-        return templates.TemplateResponse("admin_user_password.html", {
-            "request": request, "user": me, "target": target,
-            "error": "パスワードが一致しません。"
-        }, status_code=400)
-    if len(pwd) < 8:
-        return templates.TemplateResponse("admin_user_password.html", {
-            "request": request, "user": me, "target": target,
-            "error": "8文字以上にしてください。"
-        }, status_code=400)
-
-    target.password_hash = hash_password(pwd)
-    db.commit()
-    return RedirectResponse(url="/admin/users", status_code=302)
-
-
-@app.post("/admin/users/{user_id}/delete")
-def admin_user_delete(user_id: int, request: Request, db: Session = Depends(get_db)):
-    """ユーザー削除（管理者のみ）
-    - 自分自身は削除不可（誤爆防止）
-    - 最後のadminは削除不可（ロックアウト防止）
-    """
-    me = require_login(request, db)
-    if not me.is_admin:
-        raise HTTPException(403, "forbidden")
-    target = db.get(User, user_id)
-    if not target:
-        raise HTTPException(404, "user_not_found")
-
-    # 自分は削除させない
-    if target.id == me.id:
-        raise HTTPException(400, "cannot_delete_self")
-
-    # 最後のadminの削除を防止
-    if target.is_admin:
-        others_admins = db.execute(
-            select(func.count(User.id)).where(User.is_admin == True, User.id != target.id)
-        ).scalar() or 0
-        if others_admins == 0:
-            raise HTTPException(400, "cannot_delete_last_admin")
-
-    # FK は Artist.owner_id ON DELETE SET NULL のため、そのまま削除OK
-    db.delete(target)
-    db.commit()
-    return RedirectResponse(url="/admin/users", status_code=302)
-
-
-# （任意）一覧で「何人がadminか」をテンプレで使う場合は /admin/users をこうしておくと便利：
-@app.get("/admin/users", response_class=HTMLResponse)
-def admin_users(request: Request, db: Session = Depends(get_db)):
-    me = require_login(request, db)
-    if not me.is_admin:
-        raise HTTPException(403, "forbidden")
-    users = db.execute(select(User).order_by(User.id.asc())).scalars().all()
-    admin_count = db.execute(select(func.count(User.id)).where(User.is_admin == True)).scalar() or 0
-    return templates.TemplateResponse("admin_users.html", {
-        "request": request, "user": me, "users": users, "admin_count": admin_count
-    })
-
-
-@app.post("/admin/users/new")
-def admin_users_new(
-    request: Request,
-    db: Session = Depends(get_db),
-    email: str = Form(...),
-    password: str = Form(...),
-    password2: str = Form(...),
-    is_admin: str | None = Form(None),   # ← ここがポイント：チェックボックス対策
-):
-    me = require_login(request, db)
-    if not me.is_admin:
-        raise HTTPException(403, "forbidden")
-
-    email = email.strip().lower()
-    if password != password2:
-        return templates.TemplateResponse(
-            "admin_user_new.html",
-            {
-                "request": request, "user": me,
-                "error": "パスワードが一致しません。",
-                "email": email, "is_admin": (is_admin is not None)
-            },
-            status_code=400
+        resp = JSONResponse(
+            {"ok": True, "liked": liked_now, "hearts": post.likes or 0, "post_id": post_id},
+            headers={"Cache-Control": "no-store"}  # 念のため
         )
-
-    if len(password) < 8:
-        return templates.TemplateResponse(
-            "admin_user_new.html",
-            {
-                "request": request, "user": me,
-                "error": "8文字以上にしてください。",
-                "email": email, "is_admin": (is_admin is not None)
-            },
-            status_code=400
-        )
-
-    # 既存チェック（アプリ側）
-    exists = db.execute(select(User).where(User.email == email)).scalar()
-    if exists:
-        return templates.TemplateResponse(
-            "admin_user_new.html",
-            {
-                "request": request, "user": me,
-                "error": "このメールアドレスは既に登録されています。",
-                "email": email, "is_admin": (is_admin is not None)
-            },
-            status_code=400
-        )
-
-    # 登録
-    u = User(
-        email=email,
-        password_hash=hash_password(password),
-        is_admin=bool(is_admin is not None),  # ← "on" 等の文字列を True に
-    )
-    db.add(u)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return templates.TemplateResponse(
-            "admin_user_new.html",
-            {
-                "request": request, "user": me,
-                "error": "このメールアドレスは既に登録されています。（一意制約）",
-                "email": email, "is_admin": (is_admin is not None)
-            },
-            status_code=400
-        )
-
-    return RedirectResponse(url="/admin/users", status_code=302)
-
-def require_admin(request: Request):
-    if not request.session.get("is_admin"):
-        raise HTTPException(status_code=403, detail="admin only")
-
-GIT_SHA = os.getenv("GIT_SHA", "").strip()
-
-@app.get("/healthz", include_in_schema=False)
-def healthz():
-    try:
-        db_scheme = engine.url.get_backend_name() if engine else "none"
+        # 1年保持
+        resp.set_cookie(cookie_key, "1", max_age=60*60*24*365, httponly=False, samesite="Lax", path="/", secure=False)
+        logger.info(f"rid={rid} like ok post_id={post_id} hearts={post.likes}")
+        return resp
     except Exception:
-        db_scheme = "unknown"
-    return {
-        "status": "ok",
-        "git_sha": GIT_SHA or "unknown",
-        "versions": {
-            "python": os.sys.version.split()[0],
-            "fastapi": importlib.metadata.version("fastapi"),
-            "sqlalchemy": importlib.metadata.version("sqlalchemy"),
-            "uvicorn": importlib.metadata.version("uvicorn"),
-        },
-        "db_url_scheme": db_scheme
-    }
+        logger.exception(f"rid={rid} like failed post_id={post_id}")
+        return JSONResponse({"ok": False, "liked": False, "hearts": 0, "post_id": post_id}, status_code=500)
 
-@app.get("/posts/{post_id}/likes", include_in_schema=False)
-def get_likes(post_id: int, db: Session = Depends(get_db)):
+@app.post("/api/posts/{post_id}/like")
+def api_like(post_id: int, request: Request, db: Session = Depends(get_db)):
+    return _like_core(post_id, request, db)
+
+@app.post("/p/{post_id}/like")
+def page_like(post_id: int, request: Request, db: Session = Depends(get_db)):
+    return _like_core(post_id, request, db)
+
+@app.get("/posts/{post_id}/likes")
+def get_likes(post_id: int, request: Request, db: Session = Depends(get_db)):
+    rid = getattr(request.state, "request_id", "-")
     post = db.get(Post, post_id)
-    if not post: raise HTTPException(404, "post not found")
-    return {"post_id": post_id, "likes": int(post.likes or 0)}
+    if not post or post.is_deleted:
+        logger.info(f"rid={rid} likes miss post_id={post_id}")
+        raise HTTPException(status_code=404, detail="not_found")
+    logger.info(f"rid={rid} likes ok post_id={post_id} hearts={post.likes or 0}")
+    return JSONResponse({"post_id": post_id, "likes": post.likes or 0}, headers={"Cache-Control": "no-store"})
+
+# ------------------------------------------------------------------------------
+# About（統計：likes / posts / artists）
+# テンプレ about.html では {{ stats.likes }} / {{ stats.posts }} / {{ stats.artists }} を使用
+# ------------------------------------------------------------------------------
+@app.get("/about", response_class=HTMLResponse)
+def about(request: Request, db: Session = Depends(get_db)):
+    total_likes = db.scalar(select(func.coalesce(func.sum(Post.likes), 0))) or 0
+    total_posts = db.scalar(select(func.count(Post.id))) or 0
+    total_artists = db.scalar(select(func.count(Artist.id))) or 0
+    stats = {"likes": total_likes, "posts": total_posts, "artists": total_artists}
+
+    return templates.TemplateResponse(
+        "about.html",
+        {
+            "request": request,
+            "stats": stats,
+            "page_title": "About | Chilaq - もっと、好きな音楽をディグる",
+        },
+    )
+
+# ------------------------------------------------------------------------------
+# （必要に応じて）管理・認証ルート等が別にある場合は、この下で include する
+# 例:
+# from .routers import admin as admin_router
+# app.include_router(admin_router.router)
+# ------------------------------------------------------------------------------

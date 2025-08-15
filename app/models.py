@@ -53,10 +53,7 @@ class Post(Base):
     url_youtube: Mapped[Optional[str]] = mapped_column(Text, default=None)
     url_spotify: Mapped[Optional[str]] = mapped_column(Text, default=None)
     url_apple: Mapped[Optional[str]] = mapped_column(Text, default=None)
-    hearts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     artist: Mapped[Artist] = relationship("Artist", back_populates="posts")
-    likes: Mapped[int] = mapped_column(
-        Integer, default=0, server_default="0", nullable=False
-    )
+    likes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

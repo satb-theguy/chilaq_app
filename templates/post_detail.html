@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 
-{# ---------------- OGP / Title ---------------- #}
 {% block title %}{{ post.title }}{% if post.artist %} / {{ post.artist.name }}{% endif %} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
 {% block og_title %}{{ post.title }}{% if post.artist %} / {{ post.artist.name }}{% endif %} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
 {% block og_image %}{{ og_image_url }}{% endblock %}
@@ -9,9 +8,8 @@
 {% block content %}
 <div class="container py-4">
   <div class="row g-4">
-    <!-- 左：埋め込み（ハートは右側に移設） -->
+    <!-- 左：埋め込み -->
     <div class="col-12 col-lg-8">
-
       <h1 class="h4 mb-2">
         {{ post.title }}
         {% if post.artist %}
@@ -19,7 +17,6 @@
         {% endif %}
       </h1>
 
-      {# --- YouTube --- #}
       {% if embeds.youtube %}
       <div class="ratio ratio-16x9 mb-3">
         <iframe
@@ -32,7 +29,6 @@
       </div>
       {% endif %}
 
-      {# --- Spotify --- #}
       {% if embeds.spotify %}
       <div class="mb-3">
         <iframe
@@ -47,7 +43,6 @@
       </div>
       {% endif %}
 
-      {# --- Apple Music --- #}
       {% if embeds.apple %}
       <div class="mb-3">
         <iframe
@@ -62,11 +57,11 @@
       {% endif %}
     </div>
 
-    <!-- 右：シェア＋ハート（ここに“戻す”） -->
+    <!-- 右：シェア＋ハート -->
     <div class="col-12 col-lg-4">
       <div class="card shadow-sm">
         <div class="card-body">
-          <!-- ハート -->
+          <!-- ハート（likes統一） -->
           <div class="mb-3 d-flex justify-content-start">
             <button
               class="like-btn {% if request.cookies.get('liked_' ~ post.id|string) == '1' %}liked{% endif %}"
@@ -102,7 +97,6 @@
   </div>
 </div>
 
-<!-- ページ内だけの小さなコピー処理（app.js は触らない） -->
 <script>
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('#copy-share-link');

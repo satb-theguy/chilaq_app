@@ -159,24 +159,21 @@ from fastapi import Depends
 
 @app.get("/p/{post_id}", response_class=HTMLResponse)
 def post_detail(post_id: int, request: Request, db: Session = Depends(get_db)):
-    """投稿の詳細ページ：各サービスの埋め込みURLを作ってテンプレに渡す"""
+    """投稿詳細：埋め込みURLを作ってテンプレへ渡す"""
     post = db.get(Post, post_id)
     if not post or getattr(post, "is_deleted", False):
         raise HTTPException(404, "post_not_found")
 
-    # ---- 埋め込みURLを作る（None になることも想定）----
     yt = youtube_embed(getattr(post, "url_youtube", None))
     sp = spotify_embed(getattr(post, "url_spotify", None))
-    am_url, am_h = apple_embed(getattr(post, "url_apple", None))  # (url, height) を想定
+    am_url, am_h = apple_embed(getattr(post, "url_apple", None))  # (url, height) or (None, None)
 
     embeds = {
         "youtube": yt,
         "spotify": sp,
         "apple":   am_url,
-        "apple_h": am_h or 450,   # 高さが未判定なら既定 450
+        "apple_h": am_h or 450,
     }
-
-    # OGP/サムネ用（YouTube/Spotify/Appleの順で解決する実装を想定）
     og_image_url = resolve_thumbnail_for_post(post)
 
     return templates.TemplateResponse(

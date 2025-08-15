@@ -1,56 +1,120 @@
 {% extends "base.html" %}
 
-{% block title %}{{ post.title }} / {{ post.artist.name }} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
-{% block description %}{{ post.artist.name }} の投稿。新しい音楽発見は Chilaq で。{% endblock %}
-{% block og_type %}article{% endblock %}
+{# ---------------- OGP / Title ---------------- #}
+{% block title %}{{ post.title }}{% if post.artist %} / {{ post.artist.name }}{% endif %} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
+{% block og_title %}{{ post.title }}{% if post.artist %} / {{ post.artist.name }}{% endif %} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
 {% block og_image %}{{ og_image_url }}{% endblock %}
-{# thumb_of(post) が絶対URLを返す実装だと望ましい。もし相対の場合はサーバ側で絶対化するか、ここで request.url_for を使う #}
+{% block og_description %}{{ post.title }}{% if post.artist %} - {{ post.artist.name }}{% endif %}{% endblock %}
 
 {% block content %}
-  <div class="row">
-    <div class="col-lg-8">
-      <h2 class="fw-bold">{{ post.title }}</h2>
-      <p><a href="/artist/{{ post.artist.slug }}" class="text-decoration-none">{{ post.artist.name }}</a></p>
+<div class="container py-4">
+  <div class="row g-4">
+    <!-- 左：埋め込み（ハートは右側に移設） -->
+    <div class="col-12 col-lg-8">
 
+      <h1 class="h4 mb-2">
+        {{ post.title }}
+        {% if post.artist %}
+          <small class="text-muted">/ <a href="/artist/{{ post.artist.id }}">{{ post.artist.name }}</a></small>
+        {% endif %}
+      </h1>
+
+      {# --- YouTube --- #}
       {% if embeds.youtube %}
       <div class="ratio ratio-16x9 mb-3">
-        <iframe src="{{ embeds.youtube }}" allowfullscreen></iframe>
+        <iframe
+          src="{{ embeds.youtube }}"
+          title="YouTube player"
+          frameborder="0"
+          allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowfullscreen>
+        </iframe>
       </div>
       {% endif %}
 
+      {# --- Spotify --- #}
       {% if embeds.spotify %}
       <div class="mb-3">
-        <iframe style="border-radius:12px" src="{{ embeds.spotify }}" width="100%" height="152" frameBorder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>
+        <iframe
+          style="border-radius:12px"
+          src="{{ embeds.spotify }}"
+          width="100%"
+          height="352"
+          frameborder="0"
+          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+          loading="lazy">
+        </iframe>
       </div>
       {% endif %}
 
+      {# --- Apple Music --- #}
       {% if embeds.apple %}
+      <div class="mb-3">
         <iframe
-          src="{{ embeds.apple }}"
-          width="100%"
-          height="{{ embeds.apple_h }}"
-          style="border-radius:12px; overflow:hidden; background:transparent;"
+          allow="autoplay *; encrypted-media *; fullscreen *; clipboard-write"
           frameborder="0"
-          loading="lazy"
-          allow="autoplay *; encrypted-media *; clipboard-write; fullscreen *; picture-in-picture"
-          sandbox="allow-forms allow-popups allow-same-origin allow-scripts allow-top-navigation-by-user-activation">
+          height="{{ embeds.apple_h }}"
+          style="width:100%; overflow:hidden; background:transparent;"
+          sandbox="allow-forms allow-popups allow-same-origin allow-scripts allow-storage-access-by-user-activation allow-top-navigation-by-user-activation"
+          src="{{ embeds.apple }}">
         </iframe>
+      </div>
       {% endif %}
     </div>
-    <div class="col-lg-4">
-      <div class="sticky-top" style="top:1rem">
 
-        <div class="justify-content-end mb-3">
-          <button class="like-btn {{ 'liked' if request.cookies.get('liked_' ~ post.id|string) == '1' else '' }}" id="like-btn-{{ post.id }}" data-post-id="{{ post.id }}" type="button" onclick="likePost({{ post.id }})">
-          <span class="heart">♥</span>
-          <span class="like-count" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
-        </button>
-        </div>
-        <div class="card p-3">
-          <h6 class="fw-bold">Share</h6>
-          <a class="btn btn-outline-secondary btn-sm" href="https://x.com/intent/tweet?url={{ request.url }}">Post to X</a>
+    <!-- 右：シェア＋ハート（ここに“戻す”） -->
+    <div class="col-12 col-lg-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <!-- ハート -->
+          <div class="mb-3 d-flex justify-content-start">
+            <button
+              class="like-btn {% if request.cookies.get('liked_' ~ post.id|string) == '1' %}liked{% endif %}"
+              type="button"
+              aria-label="いいね"
+              aria-pressed="{% if request.cookies.get('liked_' ~ post.id|string) == '1' %}true{% else %}false{% endif %}"
+              data-post-id="{{ post.id }}">
+              <span class="heart-icon" aria-hidden="true">♥</span>
+              <span class="count" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
+            </button>
+          </div>
+
+          <!-- シェア -->
+          <h6 class="text-muted mb-2">シェア</h6>
+          <div class="d-grid gap-2">
+            <button
+              id="copy-share-link"
+              class="btn btn-outline-secondary"
+              type="button"
+              data-url="{{ request.url }}">
+              リンクをコピー
+            </button>
+            <a
+              class="btn btn-outline-primary"
+              target="_blank" rel="noopener"
+              href="https://twitter.com/intent/tweet?url={{ request.url | urlencode }}&text={{ (post.title ~ (post.artist and (' / ' ~ post.artist.name) or '')) | urlencode }}%20%23Chilaq">
+              X（旧Twitter）でシェア
+            </a>
+          </div>
         </div>
       </div>
     </div>
   </div>
+</div>
+
+<!-- ページ内だけの小さなコピー処理（app.js は触らない） -->
+<script>
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('#copy-share-link');
+  if (!btn) return;
+  const url = btn.getAttribute('data-url') || location.href;
+  navigator.clipboard.writeText(url).then(() => {
+    const old = btn.textContent;
+    btn.textContent = 'コピーしました';
+    setTimeout(() => (btn.textContent = old), 1500);
+  }).catch(() => {
+    alert('コピーに失敗しました');
+  });
+});
+</script>
 {% endblock %}

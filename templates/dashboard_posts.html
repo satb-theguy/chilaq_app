@@ -15,7 +15,7 @@
         <td>{{ p.id }}</td>
         <td><a href="/p/{{ p.id }}">{{ p.title }}</a></td>
         <td><a href="/artist/{{ p.artist.slug }}">{{ p.artist.name }}</a></td>
-        <td>♥ {{ p.hearts }}</td>
+        <td>♥ {{ p.likes or 0 }}</td>
         <td>{{ p.created_at.strftime("%Y-%m-%d") }}</td>
         <td class="text-end">
           <a class="btn btn-sm btn-outline-primary me-1" href="/dashboard/posts/{{ p.id }}/edit">Edit</a>

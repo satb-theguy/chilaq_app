@@ -1,75 +1,87 @@
-// === like UI（index/post 共通・これ1本に統一） ===
+// static/app.js
 
-// Cookieの値を取得（liked_{id} を見る）
-function getCookie(name){
-  const m = document.cookie.match('(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/+^])/g, '\\$1') + '=([^;]*)');
-  return m ? decodeURIComponent(m[1]) : undefined;
+// ---- localStorage helpers ----
+const LIKE_KEY = (id) => `liked:${id}`;
+function hasLiked(id) {
+  try { return localStorage.getItem(LIKE_KEY(id)) === '1'; } catch { return false; }
+}
+function setLiked(id) {
+  try { localStorage.setItem(LIKE_KEY(id), '1'); } catch {}
 }
 
-// ボタンの見た目を切り替え（ピンク/グレー）
-function setLikedClass(postId, liked){
-  const btn = document.getElementById(`like-btn-${postId}`);
-  if(!btn) return;
+// ---- UI paint ----
+function paintLike(btn, liked) {
+  if (!btn) return;
   btn.classList.toggle('liked', !!liked);
+  btn.setAttribute('aria-pressed', liked ? 'true' : 'false');
+  // 押したら無効化したい場合は次を有効に： if (liked) btn.disabled = true;
 }
 
-// DBの最新いいね数で上書き（初期表示/リロード用）
-async function refreshLikeCount(postId){
-  try{
-    const res = await fetch(`/posts/${postId}/likes`, { cache: 'no-store' });
-    if(!res.ok) return;
-    const data = await res.json(); // {post_id, likes}
-    const el = document.getElementById(`like-count-${postId}`);
-    if(el) el.textContent = data.likes;
-    setLikedClass(postId, getCookie(`liked_${postId}`) === '1');
-  }catch(_e){ /* no-op */ }
+// ---- 同一 post-id のボタン群を同期 ----
+function updateSamePostButtons(id, liked, count) {
+  document.querySelectorAll(`.like-btn[data-post-id="${id}"]`).forEach((el) => {
+    paintLike(el, liked);
+    const c = el.querySelector('.count');
+    if (c && typeof count === 'number') c.textContent = String(count);
+  });
 }
 
-// クリック時にHTMLの onclick から呼ばれるグローバル関数
-window.likePost = async function(postId){
-  const btn = document.getElementById(`like-btn-${postId}`);
-  const countEl = document.getElementById(`like-count-${postId}`);
-  const already = getCookie(`liked_${postId}`) === '1';
-
-  // 既に♥済みなら色合わせだけして終わり
-  if (already) { setLikedClass(postId, true); return; }
-
-  // 現在表示の数を保持
-  const prev = countEl ? parseInt(countEl.textContent || '0', 10) || 0 : 0;
-
-  // 楽観的更新（先にUIを増やす）
-  if (countEl) countEl.textContent = prev + 1;
-  setLikedClass(postId, true);
-  if (btn) btn.disabled = true;
-
-  try{
-    const res = await fetch(`/posts/${postId}/like`, {
-      method: 'POST',
-      headers: { 'Accept': 'application/json' }
-    });
-    if(!res.ok) throw new Error(`bad status ${res.status}`);
-    const data = await res.json(); // {likes, liked:true}
-    if (countEl && typeof data.likes === 'number') {
-      countEl.textContent = data.likes; // サーバ値で確定
-    }
-  }catch(err){
-    // 失敗ならロールバック
-    if (countEl) countEl.textContent = prev;
-    setLikedClass(postId, false);
-    console.warn('like failed:', err);
-    alert('いいねに失敗しました');
-  }finally{
-    if (btn) btn.disabled = false;
+// ---- API 呼び分け（後方互換。統一は Step 3 で） ----
+async function postLikeToAny(endpoints) {
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Accept': 'application/json' } });
+      if (res.ok) { try { return await res.json(); } catch { return {}; } }
+    } catch (_) { /* try next */ }
   }
-};
+  throw new Error('all like endpoints failed');
+}
 
-// 初期化：ページ内の全postの最新値で上書き＆色合わせ
-document.addEventListener('DOMContentLoaded', () => {
-  const ids = Array.from(document.querySelectorAll('.like-count'))
-    .map(el => {
-      const m = el.id && el.id.match(/^like-count-(\d+)$/);
-      return m ? Number(m[1]) : null;
-    })
-    .filter(Boolean);
-  ids.forEach(id => refreshLikeCount(id));
-});
+// ---- 初期化 ----
+function initLikes() {
+  document.querySelectorAll('.like-btn[data-post-id]').forEach((btn) => {
+    const id = btn.getAttribute('data-post-id');
+    paintLike(btn, hasLiked(id));
+
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (hasLiked(id)) return; // 連打ガード（UI側）
+
+      // 候補エンドポイント（順に試す）
+      let endpoints = [];
+      const attr = btn.getAttribute('data-like-endpoints');
+      if (attr) { try { endpoints = JSON.parse(attr); } catch {} }
+      if (!endpoints.length) {
+        endpoints = [`/p/${id}/like`, `/api/posts/${id}/like`, `/posts/${id}/like`];
+      }
+
+      const countEl = btn.querySelector('.count');
+      const current = parseInt(countEl?.textContent || '0', 10) || 0;
+
+      // 楽観的更新
+      setLiked(id);
+      updateSamePostButtons(id, true, current + 1);
+
+      try {
+        const json = await postLikeToAny(endpoints);
+        if (typeof json?.likes === 'number') {
+          updateSamePostButtons(id, true, json.likes);
+        } else if (typeof json?.hearts === 'number') {
+          // 旧レスポンス互換
+          updateSamePostButtons(id, true, json.hearts);
+        }
+      } catch (err) {
+        console.warn('like request failed:', err);
+        // 必要ならロールバック：
+        // localStorage.removeItem(LIKE_KEY(id));
+        // updateSamePostButtons(id, false, current);
+      }
+    });
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initLikes);
+} else {
+  initLikes();
+}

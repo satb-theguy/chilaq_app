@@ -104,3 +104,18 @@
     initHearts();
   }
 })();
+
+// --- Logout: keep anchor UI, send POST under the hood ---
+document.addEventListener('click', async (e) => {
+  const a = e.target.closest('a[href="/logout"]');
+  if (!a) return;                 // 他のクリックは無視
+  e.preventDefault();             // GET /logout を止める
+  try {
+    await fetch('/logout', { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
+  } catch (_) {
+    // ネットワーク失敗でもセッションが消えている可能性はあるので遷移は続行
+  } finally {
+    // ログアウト後の行き先（トップ）
+    window.location.href = '/';
+  }
+});

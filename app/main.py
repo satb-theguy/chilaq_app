@@ -206,6 +206,27 @@ def on_startup():
     else:
         logger.warning("DATABASE_URL not set")
 
+
+
+def get_public_stats(db):
+    """公開対象（is_deleted=False）の投稿に限定して集計を返す。"""
+    # 投稿数
+    posts = db.scalar(
+        select(func.count()).select_from(Post).where(Post.is_deleted == False)
+    ) or 0
+
+    # 公開中の投稿を持つアーティスト数（distinct artist_id）
+    artists = db.scalar(
+        select(func.count(func.distinct(Post.artist_id))).where(Post.is_deleted == False)
+    ) or 0
+
+    # いいね合計（NULL を 0 に）
+    likes = db.scalar(
+        select(func.coalesce(func.sum(Post.likes), 0)).where(Post.is_deleted == False)
+    ) or 0
+
+    return {"posts": posts, "artists": artists, "likes": likes}
+
 # ------------------------------------------------------------------------------
 # 基本ルート
 # ------------------------------------------------------------------------------
@@ -280,6 +301,41 @@ def _inc_like(db: Session, post_id: int) -> Post:
     db.refresh(post)
     return post
 
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    # そのままフォームを出す（見た目は templates/login.html に依存、変更なし）
+    return templates.TemplateResponse("login.html", {"request": request, "title": "ログイン"})
+
+@app.post("/login")
+def login_action(
+    request: Request,
+    db: Session = Depends(get_db),
+    email: str = Form(...),
+    password: str = Form(...),
+):
+    # ユーザー検索（email は一意なはず）
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not verify_password(password, user.password_hash):
+        # 認証失敗 → フォームに戻す（見た目は login.html 側で制御）
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "title": "ログイン", "error": "メールまたはパスワードが違います。"},
+            status_code=400,
+        )
+
+    # セッションに最低限保持（必要に応じて is_admin なども）
+    request.session["user_id"] = user.id
+    request.session["is_admin"] = bool(getattr(user, "is_admin", False))
+
+    # ダッシュボードなど、お好みの遷移先へ（ここではトップ）
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/", status_code=303)
+
 @app.post("/p/{post_id}/like")
 def like_post_legacy(post_id: int, request: Request, db: Session = Depends(get_db)):
     """後方互換：投稿詳細で使っていたレガシーURL。likes を返す。"""
@@ -343,20 +399,8 @@ def get_likes(post_id: int, request: Request, db: Session = Depends(get_db)):
 # ------------------------------------------------------------------------------
 @app.get("/about", response_class=HTMLResponse)
 def about(request: Request, db: Session = Depends(get_db)):
-    total_likes = db.scalar(select(func.coalesce(func.sum(Post.likes), 0))) or 0
-    total_posts = db.scalar(select(func.count(Post.id))) or 0
-    total_artists = db.scalar(select(func.count(Artist.id))) or 0
-    stats = {"likes": total_likes, "posts": total_posts, "artists": total_artists}
-
-    return templates.TemplateResponse(
-        "about.html",
-        {
-            "request": request,
-            "stats": stats,
-            "page_title": "About | Chilaq - もっと、好きな音楽をディグる",
-        },
-    )
-
+    stats = get_public_stats(db)  # ← 公開対象のみの集計に一本化
+    return templates.TemplateResponse("about.html", {"request": request, "stats": stats})
 # ------------------------------------------------------------------------------
 # （必要に応じて）管理・認証ルート等が別にある場合は、この下で include する
 # 例:

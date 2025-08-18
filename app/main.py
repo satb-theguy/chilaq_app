@@ -57,7 +57,7 @@ def get_db():
     finally:
         db.close()
 
-app = FastAPI(title="chilaq (slim)")
+app = FastAPI(title="Chilaq")
 
 # Session
 SESSION_SECRET = os.environ.get("SESSION_SECRET") or secrets.token_urlsafe(32)

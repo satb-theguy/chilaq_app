@@ -5,6 +5,7 @@
 <meta property="og:title" content="{{ post.title }} / {{post.artist.name}} - Chilaq"/>
 <meta property="og:description" content="もっと、好きな音楽をディグるための音楽サイト"/>
 <meta property="og:site_name" content="Chilaq"/>
+<meta property="og:image" content="{{ thumb_of(post) }}"/>
 {% endblock %}
 {% block title %}{{ post.title }} / {{post.artist.name}} - Chilaq{% endblock %}
 {% block content %}

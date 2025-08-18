@@ -217,6 +217,45 @@ def ensure_columns_and_slugs():
     finally:
         db.close()
 
+def create_initial_admin():
+    """環境変数から初期管理者を作成"""
+    # 環境変数から管理者情報を取得
+    admin_email = os.environ.get("INITIAL_ADMIN_EMAIL")
+    admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+    
+    if not admin_email or not admin_password:
+        logger.info("No initial admin credentials in environment variables")
+        return
+    
+    db = SessionLocal()
+    try:
+        # 既存の管理者がいるか確認
+        existing_admin = db.query(User).filter(User.email == admin_email).first()
+        
+        if existing_admin:
+            # 既に存在する場合、パスワードを更新（必要に応じて）
+            if os.environ.get("RESET_ADMIN_PASSWORD") == "true":
+                existing_admin.password_hash = hash_password(admin_password)
+                existing_admin.is_admin = True
+                db.commit()
+                logger.info(f"Admin password reset for {admin_email}")
+        else:
+            # 新規作成
+            admin_user = User(
+                email=admin_email,
+                password_hash=hash_password(admin_password),
+                is_admin=True
+            )
+            db.add(admin_user)
+            db.commit()
+            logger.info(f"Initial admin created: {admin_email}")
+            
+    except Exception as e:
+        logger.error(f"Error creating initial admin: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
 @app.on_event("startup")
 def on_startup():
     try:
@@ -226,12 +265,14 @@ def on_startup():
         ensure_likes_column_and_backfill()
         logger.info("Likes column ensured and backfilled")
         
-        ensure_columns_and_slugs()  # 名前を変更
+        ensure_columns_and_slugs()
         logger.info("All columns ensured and slugs generated")
+        
+        # 初期管理者を作成
+        create_initial_admin()
         
     except Exception as e:
         logger.error(f"Startup error: {e}")
-        # エラーが発生しても起動を続行
         pass
 
 # Security headers

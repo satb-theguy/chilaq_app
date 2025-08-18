@@ -41,6 +41,13 @@
           <span class="count" data-like-count="{{ post.id }}">{{ post.likes or 0 }}</span>
         </button>
       </div>
+      <div class="mt-3 d-flex align-items-center gap-2">
+        <a href="http://twitter.com/share?url=https://www.chilaq.jp/p/{{post.slug}}&text=【{{post.title}} - {{post.artist.name}}】を発掘しました！" target="_blank">
+          <button type="button" class="btn btn-dark">
+            <span>Xでシェア</span>
+          </button>
+        </a>
+      </div>
     </div>
   </div>
 {% endblock %}

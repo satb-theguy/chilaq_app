@@ -87,31 +87,72 @@ app.add_middleware(
 )
 
 # startup時のマイグレーション関数を追加
-def ensure_slugs():
-    """既存データにslugを付与（英数字のみ）"""
+def ensure_columns_and_slugs():
+    """必要なカラムを追加してからslugを生成"""
     import re
     
     with engine.begin() as conn:
-        # slug列が存在するか確認
         insp = inspect(engine)
         
-        # postsテーブル
+        # postsテーブルのカラム確認と追加
         try:
             cols = {c["name"] for c in insp.get_columns("posts")}
+            
+            # bodyカラムの追加（存在しない場合）
+            if "body" not in cols:
+                logger.info("Adding 'body' column to posts table")
+                conn.execute(text("ALTER TABLE posts ADD COLUMN body TEXT"))
+            
+            # slugカラムの追加（存在しない場合）
             if "slug" not in cols:
+                logger.info("Adding 'slug' column to posts table")
                 conn.execute(text("ALTER TABLE posts ADD COLUMN slug VARCHAR(20)"))
-                conn.execute(text("CREATE UNIQUE INDEX ix_posts_slug ON posts(slug)"))
-        except Exception:
-            pass
+                try:
+                    conn.execute(text("CREATE UNIQUE INDEX ix_posts_slug ON posts(slug)"))
+                except Exception:
+                    pass  # インデックスが既に存在する場合
+            
+            # likesカラムの確認（既存の処理）
+            if "likes" not in cols:
+                logger.info("Adding 'likes' column to posts table")
+                conn.execute(text("ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0"))
+            
+            # その他の必要なカラムの確認と追加
+            if "url_youtube" not in cols:
+                conn.execute(text("ALTER TABLE posts ADD COLUMN url_youtube VARCHAR(512)"))
+            if "url_spotify" not in cols:
+                conn.execute(text("ALTER TABLE posts ADD COLUMN url_spotify VARCHAR(512)"))
+            if "url_apple" not in cols:
+                conn.execute(text("ALTER TABLE posts ADD COLUMN url_apple VARCHAR(512)"))
+            if "thumbnail_url" not in cols:
+                conn.execute(text("ALTER TABLE posts ADD COLUMN thumbnail_url VARCHAR(512)"))
+            if "created_at" not in cols:
+                conn.execute(text("ALTER TABLE posts ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+            if "updated_at" not in cols:
+                conn.execute(text("ALTER TABLE posts ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+                
+        except Exception as e:
+            logger.error(f"Error checking/adding posts columns: {e}")
         
-        # artistsテーブル
+        # artistsテーブルのカラム確認と追加
         try:
             cols = {c["name"] for c in insp.get_columns("artists")}
+            
+            # slugカラムの追加（存在しない場合）
             if "slug" not in cols:
+                logger.info("Adding 'slug' column to artists table")
                 conn.execute(text("ALTER TABLE artists ADD COLUMN slug VARCHAR(20)"))
-                conn.execute(text("CREATE UNIQUE INDEX ix_artists_slug ON artists(slug)"))
-        except Exception:
-            pass
+                try:
+                    conn.execute(text("CREATE UNIQUE INDEX ix_artists_slug ON artists(slug)"))
+                except Exception:
+                    pass  # インデックスが既に存在する場合
+                    
+            # created_atカラムの追加（存在しない場合）
+            if "created_at" not in cols:
+                conn.execute(text("ALTER TABLE artists ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+                
+        except Exception as e:
+            logger.error(f"Error checking/adding artists columns: {e}")
     
     def is_valid_slug(slug):
         """slugが英数字のみかチェック"""
@@ -119,47 +160,79 @@ def ensure_slugs():
             return False
         return bool(re.match(r'^[a-zA-Z0-9]+$', slug))
     
-    # 既存データのslugを修正または生成
+    # slugの生成処理
     db = SessionLocal()
     try:
         # Postのslug生成・修正
-        all_posts = db.query(Post).all()
-        for post in all_posts:
-            # slugがないか、無効な文字が含まれている場合
-            if not is_valid_slug(post.slug):
-                old_slug = post.slug
-                while True:
-                    slug = generate_slug()
-                    if not db.query(Post).filter(Post.slug == slug).first():
-                        post.slug = slug
-                        if old_slug:
-                            logger.info(f"Post {post.id}: slug regenerated from '{old_slug}' to '{slug}'")
-                        break
+        # SQLでslugがNULLまたは空のレコードを取得
+        posts_without_slug = db.execute(
+            text("SELECT id FROM posts WHERE slug IS NULL OR slug = ''")
+        ).fetchall()
+        
+        for row in posts_without_slug:
+            post_id = row[0]
+            while True:
+                slug = generate_slug()
+                # 重複チェック
+                existing = db.execute(
+                    text("SELECT COUNT(*) FROM posts WHERE slug = :slug"),
+                    {"slug": slug}
+                ).scalar()
+                if existing == 0:
+                    db.execute(
+                        text("UPDATE posts SET slug = :slug WHERE id = :id"),
+                        {"slug": slug, "id": post_id}
+                    )
+                    logger.info(f"Generated slug for post {post_id}: {slug}")
+                    break
         
         # Artistのslug生成・修正
-        all_artists = db.query(Artist).all()
-        for artist in all_artists:
-            # slugがないか、無効な文字が含まれている場合
-            if not is_valid_slug(artist.slug):
-                old_slug = artist.slug
-                while True:
-                    slug = generate_slug()
-                    if not db.query(Artist).filter(Artist.slug == slug).first():
-                        artist.slug = slug
-                        if old_slug:
-                            logger.info(f"Artist {artist.id}: slug regenerated from '{old_slug}' to '{slug}'")
-                        break
+        artists_without_slug = db.execute(
+            text("SELECT id FROM artists WHERE slug IS NULL OR slug = ''")
+        ).fetchall()
+        
+        for row in artists_without_slug:
+            artist_id = row[0]
+            while True:
+                slug = generate_slug()
+                # 重複チェック
+                existing = db.execute(
+                    text("SELECT COUNT(*) FROM artists WHERE slug = :slug"),
+                    {"slug": slug}
+                ).scalar()
+                if existing == 0:
+                    db.execute(
+                        text("UPDATE artists SET slug = :slug WHERE id = :id"),
+                        {"slug": slug, "id": artist_id}
+                    )
+                    logger.info(f"Generated slug for artist {artist_id}: {slug}")
+                    break
         
         db.commit()
+        logger.info("Column migration and slug generation completed")
+        
+    except Exception as e:
+        logger.error(f"Error in slug generation: {e}")
+        db.rollback()
     finally:
         db.close()
 
 @app.on_event("startup")
 def on_startup():
-    Base.metadata.create_all(engine)
-    ensure_likes_column_and_backfill()
-    ensure_slugs()  # 追加
-    logger.info("tables ensured, likes backfilled, and slugs generated")
+    try:
+        Base.metadata.create_all(engine)
+        logger.info("Database tables created/verified")
+        
+        ensure_likes_column_and_backfill()
+        logger.info("Likes column ensured and backfilled")
+        
+        ensure_columns_and_slugs()  # 名前を変更
+        logger.info("All columns ensured and slugs generated")
+        
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+        # エラーが発生しても起動を続行
+        pass
 
 # Security headers
 @app.middleware("http")

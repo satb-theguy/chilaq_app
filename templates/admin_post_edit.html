@@ -5,7 +5,8 @@
     <a href="/admin/posts" class="btn btn-outline-secondary">Back</a>
   </div>
 
-  <form method="post" action="/admin/posts/{{ post.slug or post.id }}/edit">
+  <!-- action属性をIDベースに修正 -->
+  <form method="post" action="/admin/posts/{{ post.id }}/edit">
     <div class="mb-3">
       <label class="form-label">Title (曲名)</label>
       <input class="form-control" type="text" name="title" value="{{ post.title }}" required>
@@ -41,6 +42,6 @@
     </div>
 
     <button class="btn btn-primary" type="submit">Save</button>
-    <a href="/p/{{ post.id }}" class="btn btn-link">Cancel</a>
+    <a href="/p/{{ post.slug or post.id }}" class="btn btn-link">Cancel</a>
   </form>
 {% endblock %}

@@ -651,12 +651,17 @@ def admin_post_create(
 
 @app.get("/admin/posts/{post_id}/edit", response_class=HTMLResponse, name="admin_post_edit")
 def admin_post_edit_page(
-    post_id: int, 
+    post_id: str,  # int → str に変更（slugも受け付ける）
     request: Request, 
-    user: User = Depends(require_login),  # require_admin → require_login に変更
+    user: User = Depends(require_login),
     db: Session = Depends(get_db)
 ):
-    post = db.get(Post, post_id)
+    # slugまたはIDで投稿を検索
+    if post_id.isdigit():
+        post = db.get(Post, int(post_id))
+    else:
+        post = db.query(Post).filter(Post.slug == post_id).first()
+    
     if not post or post.is_deleted:
         raise HTTPException(404, "post_not_found")
     
@@ -677,12 +682,11 @@ def admin_post_edit_page(
     
     return templates.TemplateResponse("admin_post_edit.html", ctx(request, user=user, post=post, artists=artists))
 
-
 @app.post("/admin/posts/{post_id}/edit", response_class=HTMLResponse, name="admin_post_update")
 def admin_post_update(
-    post_id: int,
+    post_id: str,  # int → str に変更（slugも受け付ける）
     request: Request,
-    user: User = Depends(require_login),  # require_admin → require_login に変更
+    user: User = Depends(require_login),
     db: Session = Depends(get_db),
     title: Annotated[str, Form()] = "",
     body: Annotated[str, Form()] = "",
@@ -691,7 +695,12 @@ def admin_post_update(
     url_spotify: Annotated[Optional[str], Form()] = None,
     url_apple: Annotated[Optional[str], Form()] = None,
 ):
-    post = db.get(Post, post_id)
+    # slugまたはIDで投稿を検索
+    if post_id.isdigit():
+        post = db.get(Post, int(post_id))
+    else:
+        post = db.query(Post).filter(Post.slug == post_id).first()
+    
     if not post or post.is_deleted:
         raise HTTPException(404, "post_not_found")
     

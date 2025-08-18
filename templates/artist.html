@@ -1,45 +1,36 @@
 {% extends "base.html" %}
 
 {% block title %}{{ artist.name }} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
-{% block description %}{{ artist.name }} の投稿一覧。スキされた曲から新しい出会いを。{% endblock %}
-{% block og_type %}profile{% endblock %}
-{# 任意：アーティスト画像があれば og_image を上書き #}
-{# {% block og_image %}{{ artist.image_url }}{% endblock %} #}
 
 {% block content %}
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h2 class="mb-0">{{ artist.name }}</h2>
-    <div class="d-flex gap-2">
-      {% if artist.twitter %}<a class="btn btn-sm btn-outline-secondary" href="{{ artist.twitter }}" target="_blank">X</a>{% endif %}
-      {% if artist.instagram %}<a class="btn btn-sm btn-outline-secondary" href="{{ artist.instagram }}" target="_blank">Instagram</a>{% endif %}
-      {% if artist.spotify %}<a class="btn btn-sm btn-outline-secondary" href="{{ artist.spotify }}" target="_blank">Spotify</a>{% endif %}
-    </div>
   </div>
 
   <div class="row g-3">
     {% for post in posts %}
       <div class="col-12 col-sm-6 col-lg-4">
         <div class="card h-100 shadow-sm">
-          <a href="/p/{{ post.id }}">
-            {# サムネはサーバから渡した関数 thumb_of(post) をコール #}
+          <a href="/p/{{ post.slug or post.id }}">
             <img src="{{ thumb_of(post) }}" class="card-img-top" alt="thumbnail for post {{ post.id }}">
           </a>
 
           <div class="card-body">
             <h5 class="card-title mb-1">
-              {# タイトルが無い環境でもエラーにしない #}
-              {% if post.title is defined and post.title %}
-              <a href="/p/{{ post.id }}" class="card-title mb-1" style="text-decoration:none;">{{ post.title }}</a>
+              {% if post.title %}
+                <a href="/p/{{ post.slug or post.id }}" class="text-decoration-none" style="color:#212529">{{ post.title }}</a>
               {% else %}
                 Post #{{ post.id }}
               {% endif %}
             </h5>
 
-            <div class="d-flex justify-content-between">
-              {# いいね：IDを post.id に紐付け（JSが更新できるように） #}
-              <button class="btn btn-sm btn-outline-secondary like-btn {% if request.cookies.get('liked_' ~ post.id|string) == '1' %}liked{% endif %}" id="like-btn-{{ post.id }}" data-post-id="{{ post.id }}" type="button" onclick="likePost({{ post.id }})">
+            <div class="d-flex align-items-center justify-content-between">
+              <button
+                class="like-btn {% if request.cookies.get('liked_' ~ post.id|string) == '1' %}liked{% endif %}"
+                type="button"
+                data-like-btn="{{ post.id }}">
                 <span class="heart">♥</span>
-                <span class="like-count ms-1" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
+                <span class="count" data-like-count="{{ post.id }}">{{ post.likes or 0 }}</span>
               </button>
             </div>
           </div>

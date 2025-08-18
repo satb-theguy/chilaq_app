@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+  <h3 class="mb-3">New Post</h3>
+  <form method="post" action="/admin/posts">
+    <div class="mb-3">
+      <label class="form-label">Title (曲名)</label>
+      <input class="form-control" type="text" name="title" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Artist</label>
+      <select class="form-select" name="artist_id" required>
+        {% if my_artists and my_artists|length > 0 %}
+          <optgroup label="自分のアーティスト">
+            {% for a in my_artists %}
+              <option value="{{ a.id }}">{{ a.name }}</option>
+            {% endfor %}
+          </optgroup>
+        {% endif %}
+        
+        {% set other_artists = [] %}
+        {% for a in artists %}
+          {% if not my_artists or a not in my_artists %}
+            {% set _ = other_artists.append(a) %}
+          {% endif %}
+        {% endfor %}
+        
+        {% if other_artists|length > 0 %}
+          {% if my_artists and my_artists|length > 0 %}
+            <optgroup label="その他のアーティスト">
+          {% endif %}
+          {% for a in other_artists %}
+            <option value="{{ a.id }}">{{ a.name }}</option>
+          {% endfor %}
+          {% if my_artists and my_artists|length > 0 %}
+            </optgroup>
+          {% endif %}
+        {% endif %}
+      </select>
+      {% if not artists %}<div class="form-text text-danger">管理者へアーティスト登録を依頼してください。</div>{% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Description (optional)</label>
+      <textarea class="form-control" name="body" rows="3"></textarea>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">YouTube URL</label>
+      <input class="form-control" type="url" name="url_youtube" placeholder="https://www.youtube.com/watch?v=... または https://youtu.be/...">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Spotify URL</label>
+      <input class="form-control" type="url" name="url_spotify" placeholder="https://open.spotify.com/track/...">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Apple Music Embed URL</label>
+      <input class="form-control" type="url" name="url_apple" placeholder="https://embed.music.apple.com/...">
+    </div>
+    <button class="btn btn-primary" type="submit">Publish</button>
+  </form>
+{% endblock %}

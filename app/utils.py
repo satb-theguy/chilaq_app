@@ -1,200 +1,168 @@
-"""小さなユーティリティ集。
-
-- パスワードハッシュ（最低限）
-- 埋め込みURLの生成（YouTube / Spotify / Apple Music）
-"""
+# app/utils.py
 from __future__ import annotations
-import hashlib, hmac, os, re, httpx
+
+import base64
+import hashlib
+import hmac
+import os
+import re
+from typing import Optional, Tuple
 from urllib.parse import urlparse, parse_qs
-from functools import lru_cache
+
+# ---- Password Hashing ----
+def _pbkdf2_sha256(password: str, salt: bytes, iterations: int = 260000) -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
 
 def hash_password(password: str) -> str:
-    """デモ用の簡易ハッシュ。実運用では passlib[bcrypt] を推奨。"""
-    salt = os.environ.get("PWD_SALT", "chilaq-dev-salt").encode()
-    return hashlib.sha256(salt + password.encode()).hexdigest()
+    iterations = 260000
+    salt = os.urandom(16)
+    dk = _pbkdf2_sha256(password, salt, iterations)
+    return f"pbkdf2_sha256${iterations}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
 
-def verify_password(password: str, password_hash: str) -> bool:
-    return hmac.compare_digest(hash_password(password), password_hash)
+def verify_password(password: str, stored: str) -> bool:
+    if not stored:
+        return False
+    if stored.startswith("plain:"):
+        return stored[6:] == password
+    if stored.startswith("pbkdf2_sha256$"):
+        try:
+            _, iters_s, salt_b64, hash_b64 = stored.split("$", 3)
+            iterations = int(iters_s)
+            salt = base64.b64decode(salt_b64)
+            expected = base64.b64decode(hash_b64)
+            calc = _pbkdf2_sha256(password, salt, iterations)
+            return hmac.compare_digest(calc, expected)
+        except Exception:
+            return False
+    return stored == password  # 開発時の平文フォールバック
 
-_YT_ID_PATTERNS = [
-    re.compile(r"(?:v=|vi=)([A-Za-z0-9_-]{11})"),          # youtube.com/watch?v=XXXX
-    re.compile(r"youtu\.be/([A-Za-z0-9_-]{11})"),          # youtu.be/XXXX
-    re.compile(r"youtube\.com/embed/([A-Za-z0-9_-]{11})"), # youtube.com/embed/XXXX
-]
-
-def youtube_embed(url: str | None) -> str | None:
-    if not url: return None
-    # https://www.youtube.com/watch?v=XXXX → https://www.youtube.com/embed/XXXX
-    q = urlparse(url)
-    if "youtube.com" in q.netloc:
-        vid = parse_qs(q.query).get("v", [None])[0]
-        if vid: return f"https://www.youtube.com/embed/{vid}"
-    if "youtu.be" in q.netloc:
-        vid = q.path.lstrip("/")
-        if vid: return f"https://www.youtube.com/embed/{vid}"
-    return None
-
-def youtube_id(url: str | None) -> str | None:
+# ---- Embeds ----
+def _extract_youtube_id(url: Optional[str]) -> Optional[str]:
     if not url:
         return None
-    u = url.strip()
-    for pat in _YT_ID_PATTERNS:
-        m = pat.search(u)
-        if m:
-            return m.group(1)
-    # 予備: v= がクエリにいるか
-    try:
-        pr = urlparse(u)
-        vid = parse_qs(pr.query).get("v", [None])[0]
-        if vid and re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
-            return vid
-    except Exception:
-        pass
+    if "youtu.be/" in url:
+        return url.split("youtu.be/")[1].split("?")[0]
+    if "youtube.com/watch" in url and "v=" in url:
+        return url.split("v=")[1].split("&")[0]
     return None
 
-def youtube_thumbnail(url: str | None) -> str | None:
-    vid = youtube_id(url)
+def youtube_embed(url: Optional[str]) -> Optional[str]:
+    vid = _extract_youtube_id(url)
     if not vid:
         return None
-    # maxres は存在しないことがあるので hqdefault を採用（安定）
-    return f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
+    return f"https://www.youtube.com/embed/{vid}"
 
-def spotify_embed(url: str | None) -> str | None:
+def spotify_embed(url: Optional[str]) -> Optional[str]:
+    """
+    Spotify URLからembed URLを生成
+    対応フォーマット:
+    - https://open.spotify.com/track/xxx
+    - https://open.spotify.com/intl-ja/track/xxx
+    - https://open.spotify.com/album/xxx
+    - https://open.spotify.com/playlist/xxx
+    - https://open.spotify.com/episode/xxx
+    """
     if not url:
         return None
-    u = url.strip()
-    pr = urlparse(u)
-    if pr.scheme not in ("http", "https"):
-        return None
-    if pr.netloc != "open.spotify.com":
-        return None
-
-    # パスを分解
-    parts = [p for p in pr.path.split("/") if p]
-    # 例:
-    #  - ["embed", "track", "{ID}"]
-    #  - ["track", "{ID}"]
-    #  - ["intl-ja", "track", "{ID}"]
-
-    def build(kind: str, sid: str) -> str:
-        return f"https://open.spotify.com/embed/{kind}/{sid}"
-
-    if not parts:
-        return None
-
-    # embed 形式（そのまま正規化して返す）
-    if parts[0] == "embed" and len(parts) >= 3 and parts[1] in ("track", "album", "playlist"):
-        kind, sid = parts[1], parts[2]
-        return build(kind, sid)
-
-    # intl-xx をスキップ
-    idx = 0
-    if parts[0].startswith("intl-"):
-        idx = 1
-
-    if len(parts) >= idx + 2 and parts[idx] in ("track", "album", "playlist"):
-        kind, sid = parts[idx], parts[idx + 1]
-        return build(kind, sid)
-
-    return None
-
-
-@lru_cache(maxsize=512)
-def spotify_thumbnail(url: str | None) -> str | None:
-    if not url:
-        return None
+    
     try:
-        r = httpx.get("https://open.spotify.com/oembed", params={"url": url}, timeout=3.0)
-        if r.status_code == 200:
-            t = r.json().get("thumbnail_url")
-            if t:
-                return t.replace("http://", "https://")
+        # 正規表現でSpotify URLをパース
+        # intl-xx などの国際化パスにも対応
+        pattern = r'https://open\.spotify\.com/(?:intl-[a-z]{2}/)?([a-z]+)/([a-zA-Z0-9]+)'
+        match = re.match(pattern, url)
+        
+        if match:
+            content_type = match.group(1)  # track, album, playlist, episode など
+            content_id = match.group(2)    # ID部分
+            
+            # クエリパラメータを除去（?si=xxxなど）
+            content_id = content_id.split('?')[0]
+            
+            # embed URLを生成
+            return f"https://open.spotify.com/embed/{content_type}/{content_id}"
+        
+        # 旧形式の処理（後方互換性のため残す）
+        if "open.spotify.com/" in url:
+            parts = url.split("open.spotify.com/")[1]
+            # intl-xx/ を除去
+            parts = re.sub(r'^intl-[a-z]{2}/', '', parts)
+            # クエリパラメータを除去
+            parts = parts.split('?')[0]
+            return f"https://open.spotify.com/embed/{parts}"
+            
     except Exception:
         pass
+    
     return None
 
-
-
-def apple_embed(url: str | None) -> tuple[str | None, int | None]:
+def apple_embed(url: Optional[str]) -> Tuple[Optional[str], Optional[int]]:
+    """
+    Apple Music URLからembed URLを生成
+    対応フォーマット:
+    - https://music.apple.com/jp/album/xxx/123456789
+    - https://music.apple.com/jp/album/xxx/123456789?i=987654321
+    - https://music.apple.com/us/album/xxx/123456789
+    - https://embed.music.apple.com/xxx (既にembed URL)
+    """
     if not url:
-        return None, None
-    u = url.strip()
-    pr = urlparse(u)
-    if pr.scheme not in ("http", "https"):
-        return None, None
-    if pr.netloc not in ("music.apple.com", "embed.music.apple.com"):
-        return None, None
+        return (None, None)
+    
+    try:
+        # 既にembed URLの場合はそのまま返す
+        if "embed.music.apple.com" in url:
+            return (url, 450)
+        
+        # 通常のApple Music URLをembed URLに変換
+        if "music.apple.com" in url:
+            # URLパターンをパース
+            # 例: https://music.apple.com/jp/album/name/123456789?i=987654321
+            pattern = r'https://music\.apple\.com/([a-z]{2})/([a-z]+)/[^/]+/(\d+)(?:\?i=(\d+))?'
+            match = re.match(pattern, url)
+            
+            if match:
+                country = match.group(1)    # jp, us など
+                content_type = match.group(2)  # album, playlist など
+                album_id = match.group(3)    # アルバムID
+                track_id = match.group(4)    # トラックID（オプショナル）
+                
+                # embed URLを生成
+                if track_id:
+                    # 特定のトラックの場合
+                    embed_url = f"https://embed.music.apple.com/{country}/{content_type}/{album_id}?i={track_id}"
+                else:
+                    # アルバム全体の場合
+                    embed_url = f"https://embed.music.apple.com/{country}/{content_type}/{album_id}"
+                
+                return (embed_url, 450)
+            
+            # パターンにマッチしない場合でも、music.apple.comが含まれていれば変換を試みる
+            # 単純な置換で対応
+            embed_url = url.replace("music.apple.com", "embed.music.apple.com")
+            return (embed_url, 450)
+            
+    except Exception:
+        pass
+    
+    return (None, None)
 
-    # 埋め込み用ホストに正規化
-    src = f"https://embed.music.apple.com{pr.path}"
-    if pr.query:
-        src += f"?{pr.query}"
-
-    path = pr.path.lower()
-    # ルール:
-    # - /album/ か /playlist/（かつ ?i= が無い）→ 一覧型 → 450px
-    # - /song/ または /album/... ?i=...（単曲） → 175px
-    if "/playlist/" in path:
-        height = 450
-    elif "/album/" in path and "i=" not in (pr.query or ""):
-        height = 450
-    else:
-        height = 175
-
-    return src, height
-
-# --- Apple Music: 埋め込みからは安全に画像が取れないので今は None ------------
-def apple_thumbnail(url: str | None) -> str | None:
-    # 将来: iTunes Search API 等で取得する（現状はプレースホルダにフォールバック）
-    return None
-
-
-# --- 優先順位で決定 --------------------------------------------
-
+# ---- Thumbnails ----
 def resolve_thumbnail_for_post(post) -> str:
-    """
-    優先順位: YouTube → Spotify → Apple → プレースホルダ
-    戻り値は表示用の画像URL
-    """
-    for getter, src in (
-        (youtube_thumbnail, post.url_youtube),
-        (spotify_thumbnail, post.url_spotify),
-        (apple_thumbnail,   post.url_apple),
-    ):
-        if not src:
-            continue
-        img = getter(src)
-        if img:
-            return img
-    # ローカルのプレースホルダ
-    return "/static/placeholder.svg"
+    for key in ("thumbnail_url", "image_url", "thumb_url", "cover_url"):
+        v = getattr(post, key, None)
+        if v:
+            return v
+    yt = _extract_youtube_id(getattr(post, "url_youtube", None))
+    if yt:
+        return f"https://img.youtube.com/vi/{yt}/hqdefault.jpg"
+    return "/static/ogp.png"
 
-def thumb_of(post):
+def thumb_of(post) -> str:
     return resolve_thumbnail_for_post(post)
 
-# app/utils.py
-from urllib.parse import urlparse, urljoin
+import random
+import string
 
-def absolutize_url(request, url: str | None) -> str:
-    """
-    OGP向けに、相対URL/アプリ内パスを絶対URLに変換する。
-    - 既に http(s) ならそのまま返す
-    - /static/... や static/... は url_for('static', ...) で絶対化
-    - それ以外の相対は base_url と結合
-    - None や空はデフォルトの OGP 画像を返す
-    """
-    if not url:
-        return str(request.url_for("static", path="og-default.jpg"))
-
-    p = urlparse(url)
-    if p.scheme in ("http", "https"):
-        return url
-
-    # /static/... → url_for でホスト名付きに
-    if url.startswith("/static/"):
-        return str(request.url_for("static", path=url.removeprefix("/static/")))
-    if url.startswith("static/"):
-        return str(request.url_for("static", path=url.removeprefix("static/")))
-
-    # それ以外の相対パス → base_url と結合
-    return urljoin(str(request.base_url), url)
+def generate_slug(length: int = 10) -> str:
+    """ランダムなslugを生成（大文字・小文字・数字）"""
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choice(chars) for _ in range(length))

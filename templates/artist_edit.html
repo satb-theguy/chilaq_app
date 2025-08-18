@@ -3,6 +3,10 @@
 <div class="container py-4">
   <h1 class="h4 mb-3">アーティスト編集</h1>
 
+  {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+
   <form method="post" action="{{ request.url_for('admin_artist_update', artist_id=artist.id) }}">
     <div class="mb-3">
       <label class="form-label">アーティスト名 *</label>
@@ -10,30 +14,24 @@
     </div>
 
     <div class="mb-3">
-      <label class="form-label">X (Twitter) URL</label>
-      <input type="url" name="twitter" class="form-control" value="{{ artist.twitter or '' }}">
+      <label class="form-label">ユーザーに紐付け（オプション）</label>
+      <div class="position-relative">
+        <input 
+          type="email" 
+          name="owner_email" 
+          id="ownerEmailInput"
+          class="form-control" 
+          value="{{ current_owner.email if current_owner else '' }}"
+          placeholder="ユーザーのメールアドレスを入力..."
+          autocomplete="off"
+        >
+        <div class="form-text">ユーザーのメールアドレスを入力してください。空欄にすると紐付けが解除されます。</div>
+        
+        <!-- サジェストリスト -->
+        <div id="suggestList" class="list-group position-absolute w-100 shadow-sm" style="display: none; z-index: 1000; max-height: 200px; overflow-y: auto;">
+        </div>
+      </div>
     </div>
-
-    <div class="mb-3">
-      <label class="form-label">Instagram URL</label>
-      <input type="url" name="instagram" class="form-control" value="{{ artist.instagram or '' }}">
-    </div>
-
-    <div class="mb-3">
-      <label class="form-label">Spotify アーティストURL</label>
-      <input type="url" name="spotify" class="form-control" value="{{ artist.spotify or '' }}">
-    </div>
-
-    {# website / bio は DB に列が無いため一旦非表示
-    <div class="mb-3">
-      <label class="form-label">Webサイト</label>
-      <input type="url" name="website" class="form-control" value="">
-    </div>
-    <div class="mb-3">
-      <label class="form-label">紹介文</label>
-      <textarea name="bio" rows="4" class="form-control"></textarea>
-    </div>
-    #}
 
     <div class="d-flex gap-2">
       <button class="btn btn-primary" type="submit">保存する</button>
@@ -41,4 +39,84 @@
     </div>
   </form>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const input = document.getElementById('ownerEmailInput');
+  const suggestList = document.getElementById('suggestList');
+  let searchTimeout;
+  
+  // 入力時の処理
+  input.addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    const query = this.value.trim();
+    
+    // 1文字以上入力されたら検索
+    if (query.length >= 1) {
+      searchTimeout = setTimeout(() => {
+        searchUsers(query);
+      }, 300); // 300ms待ってから検索
+    } else {
+      suggestList.style.display = 'none';
+    }
+  });
+  
+  // フォーカスが外れたらサジェストを隠す（少し遅延を入れる）
+  input.addEventListener('blur', function() {
+    setTimeout(() => {
+      suggestList.style.display = 'none';
+    }, 200);
+  });
+  
+  // ユーザー検索
+  async function searchUsers(query) {
+    try {
+      const response = await fetch(`/api/admin/users/search?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      
+      if (data.users && data.users.length > 0) {
+        showSuggestions(data.users);
+      } else {
+        suggestList.style.display = 'none';
+      }
+    } catch (error) {
+      console.error('検索エラー:', error);
+      suggestList.style.display = 'none';
+    }
+  }
+  
+  // サジェスト表示
+  function showSuggestions(users) {
+    suggestList.innerHTML = '';
+    
+    users.forEach(user => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+      
+      // メールアドレスを表示
+      const emailSpan = document.createElement('span');
+      emailSpan.textContent = user.email;
+      item.appendChild(emailSpan);
+      
+      // 管理者の場合はバッジを表示
+      if (user.is_admin) {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-danger';
+        badge.textContent = 'admin';
+        item.appendChild(badge);
+      }
+      
+      item.addEventListener('click', function() {
+        input.value = user.email;
+        suggestList.style.display = 'none';
+      });
+      
+      suggestList.appendChild(item);
+    });
+    
+    suggestList.style.display = 'block';
+  }
+});
+</script>
 {% endblock %}

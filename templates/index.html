@@ -1,7 +1,5 @@
 {% extends "base.html" %}
-
-{% block title %}Chilaq - もっと、好きな音楽をディグる{% endblock %}
-
+{% block title %}Home - chilaq{% endblock %}
 {% block content %}
 <div class="container my-4">
 
@@ -15,34 +13,31 @@
     {% for post in posts %}
       <div class="col-12 col-sm-6 col-lg-4">
         <div class="card h-100 shadow-sm">
-          <a href="/p/{{ post.id }}">
+          <a href="/p/{{ post.slug or post.id }}">
             <img src="{{ thumb_of(post) }}" class="card-img-top" alt="thumbnail for post {{ post.id }}">
           </a>
 
           <div class="card-body">
             <h5 class="card-title mb-1">
               {% if post.title %}
-                <a href="/p/{{ post.id }}" class="text-decoration-none" style="color:#212529">{{ post.title }}</a>
+                <a href="/p/{{ post.slug or post.id }}" class="text-decoration-none" style="color:#212529">{{ post.title }}</a>
               {% else %}
                 Post #{{ post.id }}
               {% endif %}
             </h5>
             <p class="card-text text-muted mb-2">
               {% if post.artist and post.artist.name %}
-                <a href="/artist/{{ post.artist.id }}" class="text-decoration-none" style="color:#212529">{{ post.artist.name }}</a>
+                <a href="/artist/{{ post.artist.slug or post.artist.id }}}" class="text-decoration-none" style="color:#212529">{{ post.artist.name }}</a>
               {% endif %}
             </p>
 
             <div class="d-flex align-items-center justify-content-between">
-              <!-- いいね：class・data属性はJSと一致させる -->
               <button
                 class="like-btn {% if request.cookies.get('liked_' ~ post.id|string) == '1' %}liked{% endif %}"
                 type="button"
-                aria-label="いいね"
-                aria-pressed="{% if request.cookies.get('liked_' ~ post.id|string) == '1' %}true{% else %}false{% endif %}"
-                data-post-id="{{ post.id }}">
-                <span class="heart-icon" aria-hidden="true">♥</span>
-                <span class="count like-count" id="like-count-{{ post.id }}">{{ post.likes or 0 }}</span>
+                data-like-btn="{{ post.id }}">
+                <span class="heart">♥</span>
+                <span class="count" data-like-count="{{ post.id }}">{{ post.likes or 0 }}</span>
               </button>
             </div>
           </div>

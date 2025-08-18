@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Annotated
 
 from fastapi import FastAPI, Request, HTTPException, Depends, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -1004,3 +1004,75 @@ def admin_user_delete(
     db.delete(target)
     db.commit()
     return admin_users(request, user=user, db=db)
+
+# ------------------------------------------------------------------------------
+# アカウント設定
+# ------------------------------------------------------------------------------
+
+@app.get("/account", response_class=HTMLResponse, name="account_settings")
+def account_settings(
+    request: Request,
+    user: User = Depends(require_login),
+    db: Session = Depends(get_db)
+):
+    """アカウント設定ページ"""
+    # メッセージがあれば取得（パスワード変更成功時など）
+    message = request.session.pop("account_message", None)
+    error = request.session.pop("account_error", None)
+    
+    return templates.TemplateResponse(
+        "account_settings.html",
+        ctx(request, user=user, message=message, error=error)
+    )
+
+@app.post("/account/change-password", response_class=HTMLResponse, name="change_password")
+def change_password(
+    request: Request,
+    user: User = Depends(require_login),
+    db: Session = Depends(get_db),
+    current_password: Annotated[str, Form()] = "",
+    new_password: Annotated[str, Form()] = "",
+    new_password2: Annotated[str, Form()] = "",
+):
+    """パスワード変更処理"""
+    
+    # 現在のパスワードが正しいか確認
+    if not verify_password(current_password, user.password_hash):
+        request.session["account_error"] = "現在のパスワードが正しくありません。"
+        return RedirectResponse(url="/account", status_code=303)
+    
+    # 新しいパスワードの検証
+    if not new_password:
+        request.session["account_error"] = "新しいパスワードを入力してください。"
+        return RedirectResponse(url="/account", status_code=303)
+    
+    if len(new_password) < 8:
+        request.session["account_error"] = "パスワードは8文字以上で設定してください。"
+        return RedirectResponse(url="/account", status_code=303)
+    
+    if new_password != new_password2:
+        request.session["account_error"] = "新しいパスワードが一致しません。"
+        return RedirectResponse(url="/account", status_code=303)
+    
+    if current_password == new_password:
+        request.session["account_error"] = "新しいパスワードは現在のパスワードと異なるものにしてください。"
+        return RedirectResponse(url="/account", status_code=303)
+    
+    # パスワードを更新
+    try:
+        user.password_hash = hash_password(new_password)
+        db.add(user)
+        db.commit()
+        
+        # 成功メッセージをセッションに保存
+        request.session["account_message"] = "パスワードを変更しました。"
+        
+        logger.info(f"Password changed for user {user.email}")
+        
+    except Exception as e:
+        logger.error(f"Password change failed for user {user.email}: {e}")
+        db.rollback()
+        request.session["account_error"] = "パスワードの変更に失敗しました。"
+    
+    # アカウント設定ページにリダイレクト
+    return RedirectResponse(url="/account", status_code=303)

@@ -1,4 +1,11 @@
 {% extends "base.html" %}
+{% block metaproperty %}
+<meta property="og:url" content="https://www.chilaq.jp/p/{{post.slug}}"/>
+<meta property="og:type" content="website"/>
+<meta property="og:title" content="{{ post.title }} / {{post.artist.name}} - Chilaq"/>
+<meta property="og:description" content="もっと、好きな音楽をディグるための音楽サイト"/>
+<meta property="og:site_name" content="Chilaq"/>
+{% endblock %}
 {% block title %}{{ post.title }} / {{post.artist.name}} - Chilaq{% endblock %}
 {% block content %}
   <div class="row g-4">

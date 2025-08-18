@@ -1,5 +1,12 @@
 {% extends "base.html" %}
 
+{% block metaproperty %}
+<meta property="og:type" content="website"/>
+<meta property="og:title" content=" {{artist.name}} - Chilaq"/>
+<meta property="og:description" content="もっと、好きな音楽をディグるための音楽サイト"/>
+<meta property="og:site_name" content="Chilaq"/>
+{% endblock %}
+
 {% block title %}{{ artist.name }} | Chilaq - もっと、好きな音楽をディグる{% endblock %}
 
 {% block content %}

@@ -88,7 +88,7 @@ app.add_middleware(
 
 # startup時のマイグレーション関数を追加
 def ensure_columns_and_slugs():
-    """必要なカラムを追加してからslugを生成"""
+    """必要なカラムを追加してからslugを生成、古いheartsカラムも処理"""
     import re
     
     with engine.begin() as conn:
@@ -97,6 +97,28 @@ def ensure_columns_and_slugs():
         # postsテーブルのカラム確認と追加
         try:
             cols = {c["name"] for c in insp.get_columns("posts")}
+            
+            # heartsカラムが存在する場合の処理（古いカラム）
+            if "hearts" in cols:
+                logger.info("Migrating hearts column to likes")
+                try:
+                    # heartsの値をlikesにコピー（likesが0またはNULLの場合のみ）
+                    conn.execute(text("""
+                        UPDATE posts 
+                        SET likes = COALESCE(hearts, 0) 
+                        WHERE likes IS NULL OR likes = 0
+                    """))
+                    
+                    # heartsカラムのNOT NULL制約を削除（PostgreSQL）
+                    conn.execute(text("ALTER TABLE posts ALTER COLUMN hearts DROP NOT NULL"))
+                    
+                    # heartsカラムにデフォルト値を設定
+                    conn.execute(text("ALTER TABLE posts ALTER COLUMN hearts SET DEFAULT 0"))
+                    
+                    logger.info("Hearts column constraints removed")
+                except Exception as e:
+                    logger.warning(f"Could not modify hearts column: {e}")
+                    # エラーが発生しても続行
             
             # bodyカラムの追加（存在しない場合）
             if "body" not in cols:
@@ -633,19 +655,54 @@ def admin_post_create(
         if not db.query(Post).filter(Post.slug == slug).first():
             break
     
-    post = Post(
-        slug=slug,  # 追加
-        title=title,
-        body=body,
-        artist_id=artist_id,
-        likes=0,
-        is_deleted=False,
-        url_youtube=url_youtube,
-        url_spotify=url_spotify,
-        url_apple=url_apple,
-    )
-    db.add(post)
-    db.commit()
+    # 新しい投稿を作成（heartsカラムが存在する場合に備えて、SQLで直接INSERT）
+    try:
+        # まず通常のORMで作成を試みる
+        post = Post(
+            slug=slug,
+            title=title,
+            body=body,
+            artist_id=artist_id,
+            likes=0,
+            is_deleted=False,
+            url_youtube=url_youtube,
+            url_spotify=url_spotify,
+            url_apple=url_apple,
+        )
+        db.add(post)
+        db.commit()
+    except Exception as e:
+        # エラーが発生した場合、直接SQLで挿入
+        logger.warning(f"ORM insert failed, trying raw SQL: {e}")
+        db.rollback()
+        
+        # heartsカラムも含めて明示的に値を設定
+        result = db.execute(
+            text("""
+                INSERT INTO posts (
+                    slug, title, body, artist_id, likes, is_deleted,
+                    url_youtube, url_spotify, url_apple,
+                    created_at, updated_at
+                ) VALUES (
+                    :slug, :title, :body, :artist_id, :likes, :is_deleted,
+                    :url_youtube, :url_spotify, :url_apple,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+            """),
+            {
+                "slug": slug,
+                "title": title,
+                "body": body or "",
+                "artist_id": artist_id,
+                "likes": 0,
+                "is_deleted": False,
+                "url_youtube": url_youtube or "",
+                "url_spotify": url_spotify or "",
+                "url_apple": url_apple or "",
+            }
+        )
+        db.commit()
+    
     return admin_posts(request, user=user, db=db)
 
 

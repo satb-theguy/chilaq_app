@@ -145,6 +145,34 @@ def apple_embed(url: Optional[str]) -> Tuple[Optional[str], Optional[int]]:
     
     return (None, None)
 
+def bandcamp_embed(url: str | None, *, timeout: int = 5) -> str | None:
+    """
+    Bandcamp の oEmbed を使って埋め込み HTML を返す。
+    例: https://artist.bandcamp.com/track/xxx /album/xxx などの URL を渡す。
+    失敗時は None を返却。
+    """
+    if not url:
+        return None
+    try:
+        oembed = "https://bandcamp.com/oembed?format=json&url=" + urllib.parse.quote(url, safe="")
+        with urllib.request.urlopen(oembed, timeout=timeout) as resp:
+            data = json.load(resp)
+        html = data.get("html")
+        if not html:
+            return None
+        # 幅はレスポンシブ優先（固定幅指定をざっくり 100% に置換）
+        html = html.replace('width="350"', 'width="100%"').replace("width: 350px;", "width: 100%;")
+        return html
+    except Exception:
+        return None
+
+def soundcloud_embed(url: Optional[str]) -> Tuple[Optional[str], Optional[int]]:
+    if not url or "soundcloud.com" not in url:
+        return None, None
+    src = f"https://w.soundcloud.com/player/?url={quote(url)}&auto_play=false&show_user=true"
+    return f'<iframe allow="autoplay" frameborder="0" scrolling="no" src="{src}" width="100%" height="166"></iframe>', 166
+
+
 # ---- Thumbnails ----
 def resolve_thumbnail_for_post(post) -> str:
     for key in ("thumbnail_url", "image_url", "thumb_url", "cover_url"):

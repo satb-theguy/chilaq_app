@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3 class="mb-0">My Posts{% if user.is_admin %} (All){% endif %}</h3>
-    <a href="/admin/new_post" class="btn btn-primary">＋ New</a>
+    <h3 class="mb-0">自分の投稿{% if user.is_admin %} （全て）{% endif %}</h3>
+    <a href="/admin/new_post" class="btn btn-primary">＋ 新規投稿</a>
   </div>
 
   <table class="table align-middle">
     <thead>
-      <tr><th>Title</th><th>Artist</th><th>Hearts</th><th>Created</th><th></th></tr>
+      <tr><th>曲名</th><th>アーティスト</th><th>いいね数</th><th>作成日</th><th></th></tr>
     </thead>
     <tbody>
       {% for p in posts %}
@@ -27,9 +27,9 @@
         <td>{{ p.created_at.strftime("%Y-%m-%d") if p.created_at else "-" }}</td>
         <td class="text-end">
           {% if p.can_edit %}
-            <a class="btn btn-sm btn-outline-primary me-1" href="/admin/posts/{{ p.id }}/edit">Edit</a>
+            <a class="btn btn-sm btn-outline-primary me-1" href="/admin/posts/{{ p.id }}/edit">編集</a>
             <form method="post" action="{{ request.url_for('admin_post_delete', post_id=p.id) }}" class="d-inline" onsubmit="return confirm('Delete this post?');">
-              <button class="btn btn-sm btn-outline-danger">Delete</button>
+              <button class="btn btn-sm btn-outline-danger">削除</button>
             </form>
           {% else %}
             <span class="text-muted small">編集権限なし</span>

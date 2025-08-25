@@ -1,4 +1,29 @@
 /* =========================================================
+   Base Styles - 全体共通
+   ========================================================= */
+
+/* サムネイル画像の基本スタイル */
+.thumb { 
+  width: 100%; 
+  aspect-ratio: 16/9; 
+  object-fit: cover; 
+  border-radius: 8px; 
+}
+
+/* ナビゲーションバーの調整（モバイル） */
+@media (max-width: 991px) {
+  .navbar-collapse {
+    margin-top: 1rem;
+  }
+  .navbar-nav {
+    padding-bottom: 0.5rem;
+  }
+  .navbar-text {
+    padding-bottom: 0.5rem;
+  }
+}
+
+/* =========================================================
    Like Button — canonical styles (use class="like-btn")
    ========================================================= */
 :root{
@@ -51,3 +76,48 @@ button.like-btn,
 
 /* ほんのりホバー影（好みで） */
 .like-btn:not(.liked):hover{ box-shadow:0 1px 3px rgba(16,24,40,.06); }
+
+/* =========================================================
+   Sticky Sidebar - 投稿詳細ページ用
+   ========================================================= */
+
+/* デスクトップでのスティッキーサイドバー */
+@media (min-width: 992px) {
+  .sticky-sidebar {
+    position: sticky;
+    top: 24px; /* ナビゲーションバーの高さ + 余白 */
+    z-index: 10;
+  }
+  
+  /* スクロール時の最大高さ設定（必要に応じて） */
+  .sticky-sidebar {
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+  }
+  
+  /* スクロールバーのスタイリング（オプション） */
+  .sticky-sidebar::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .sticky-sidebar::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+  }
+  
+  .sticky-sidebar::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 3px;
+  }
+  
+  .sticky-sidebar::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+}
+
+/* モバイルではスティッキーを無効化 */
+@media (max-width: 991px) {
+  .sticky-sidebar {
+    position: static;
+  }
+}

@@ -27,6 +27,8 @@ from .utils import (
     youtube_embed,
     spotify_embed,
     apple_embed,
+    soundcloud_embed,
+    bandcamp_embed,
     resolve_thumbnail_for_post,
     thumb_of,
     generate_slug,

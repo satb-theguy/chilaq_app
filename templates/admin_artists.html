@@ -5,6 +5,14 @@
     <a href="/admin" class="btn btn-outline-secondary">戻る</a>
   </div>
 
+  <!-- エラーメッセージ表示 -->
+  {% if error %}
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+      <i class="bi bi-exclamation-triangle me-2"></i>{{ error }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+  {% endif %}
+
   <div class="row g-3">
     <div class="col-md-6">
       <div class="card p-3">
@@ -21,11 +29,30 @@
     <h6 class="fw-bold mb-2">アーティスト一覧</h6>
     <ul class="list-group">
       {% for a in artists %}
-      <li class="list-group-item d-flex justify-content-between align-items-center">
-        <span>{{ a.name }} {% if a.owner %}<span class="text-muted">– {{ a.owner.email }}</span>{% endif %}</span>
+      <li class="list-group-item d-flex justify-content-between align-items-center" data-artist-id="{{ a.id }}">
+        <span>
+          {{ a.name }}
+          {% if a.name == "Deleted_Artist" %}
+            <span class="badge bg-secondary ms-2">システム</span>
+          {% endif %}
+          {% if a.owner %}
+            <span class="text-muted">– {{ a.owner.email }}</span>
+          {% endif %}
+        </span>
         <div class="d-flex gap-2">
           <a class="btn btn-sm btn-outline-secondary" href="/artist/{{ a.slug or a.id }}">開く</a>
-          <a class="btn btn-sm btn-outline-primary" href="/admin/artists/{{ a.id }}/edit">編集</a>
+          {% if a.name != "Deleted_Artist" %}
+            <a class="btn btn-sm btn-outline-primary" href="/admin/artists/{{ a.id }}/edit">編集</a>
+            <button 
+              class="btn btn-sm btn-outline-danger delete-artist-btn" 
+              data-artist-id="{{ a.id }}"
+              data-artist-name="{{ a.name }}"
+              type="button">
+              削除
+            </button>
+          {% else %}
+            <span class="text-muted small">システムアーティストのため編集・削除不可</span>
+          {% endif %}
         </div>
       </li>
       {% else %}
@@ -33,4 +60,242 @@
       {% endfor %}
     </ul>
   </div>
+
+<!-- 削除確認モーダル -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-labelledby="deleteConfirmModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteConfirmModalLabel">アーティスト削除の確認</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning d-flex align-items-center">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>
+          <strong>注意：この操作は取り消せません</strong>
+        </div>
+        <p>「<strong id="deleteArtistName"></strong>」を削除しますか？</p>
+        <div class="text-muted small">
+          <p class="mb-2">削除の動作:</p>
+          <ul class="mb-0">
+            <li><strong>アクティブな投稿がある場合:</strong> 削除できません</li>
+            <li><strong>削除済み投稿のみの場合:</strong> それらは「Deleted_Artist」に移行されます</li>
+            <li><strong>投稿がない場合:</strong> アーティストを完全に削除します</li>
+          </ul>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+        <button type="button" class="btn btn-danger" id="confirmDeleteBtn">
+          <span id="deleteButtonText">削除する</span>
+          <div class="spinner-border spinner-border-sm ms-2" role="status" id="deleteSpinner" style="display: none;">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- エラー表示モーダル -->
+<div class="modal fade" id="deleteErrorModal" tabindex="-1" aria-labelledby="deleteErrorModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteErrorModalLabel">削除できません</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger d-flex align-items-center">
+          <i class="bi bi-x-circle-fill me-2"></i>
+          <div>
+            <strong>削除に失敗しました</strong>
+            <div id="deleteErrorMessage" class="mt-1"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">閉じる</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // モーダル要素の取得
+  const deleteConfirmModal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+  const deleteErrorModal = new bootstrap.Modal(document.getElementById('deleteErrorModal'));
+  const deleteArtistName = document.getElementById('deleteArtistName');
+  const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
+  const deleteButtonText = document.getElementById('deleteButtonText');
+  const deleteSpinner = document.getElementById('deleteSpinner');
+  const deleteErrorMessage = document.getElementById('deleteErrorMessage');
+  
+  let currentArtistId = null;
+  let currentArtistName = '';
+  
+  // 削除ボタンのクリックイベント
+  document.addEventListener('click', function(e) {
+    if (e.target && e.target.classList.contains('delete-artist-btn')) {
+      currentArtistId = e.target.getAttribute('data-artist-id');
+      currentArtistName = e.target.getAttribute('data-artist-name');
+      
+      // モーダルにアーティスト名を表示
+      deleteArtistName.textContent = currentArtistName;
+      
+      // 削除確認モーダルを表示
+      deleteConfirmModal.show();
+    }
+  });
+  
+  // 削除確定ボタンのクリックイベント
+  confirmDeleteBtn.addEventListener('click', async function() {
+    if (!currentArtistId) return;
+    
+    // ボタンを無効化してローディング表示
+    confirmDeleteBtn.disabled = true;
+    deleteButtonText.textContent = '削除中...';
+    deleteSpinner.style.display = 'inline-block';
+    
+    try {
+      const response = await fetch(`/api/admin/artists/${currentArtistId}/delete`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // 削除成功：該当する行を画面から削除
+        const artistRow = document.querySelector(`[data-artist-id="${currentArtistId}"]`);
+        if (artistRow) {
+          // フェードアウト効果
+          artistRow.style.transition = 'opacity 0.3s ease-out';
+          artistRow.style.opacity = '0';
+          
+          setTimeout(() => {
+            artistRow.remove();
+            
+            // アーティストが0件になった場合の処理
+            const remainingArtists = document.querySelectorAll('[data-artist-id]');
+            if (remainingArtists.length === 0) {
+              const artistList = document.querySelector('.list-group');
+              artistList.innerHTML = '<li class="list-group-item text-muted">アーティストがいません</li>';
+            }
+          }, 300);
+        }
+        
+        // 成功メッセージを表示（詳細情報を含む）
+        showSuccessMessage(data.message, data.moved_posts_count || 0);
+        
+        // モーダルを閉じる
+        deleteConfirmModal.hide();
+        
+      } else {
+        // エラーの場合：エラーモーダルを表示
+        deleteErrorMessage.textContent = data.error;
+        deleteConfirmModal.hide();
+        deleteErrorModal.show();
+      }
+      
+    } catch (error) {
+      console.error('削除エラー:', error);
+      deleteErrorMessage.textContent = 'ネットワークエラーが発生しました';
+      deleteConfirmModal.hide();
+      deleteErrorModal.show();
+    } finally {
+      // ボタンを元に戻す
+      confirmDeleteBtn.disabled = false;
+      deleteButtonText.textContent = '削除する';
+      deleteSpinner.style.display = 'none';
+      
+      // 変数をリセット
+      currentArtistId = null;
+      currentArtistName = '';
+    }
+  });
+  
+  // 成功メッセージの表示（移行情報付き）
+  function showSuccessMessage(message, movedPostsCount = 0) {
+    // 既存のアラートを削除
+    const existingAlert = document.querySelector('.alert-success');
+    if (existingAlert) {
+      existingAlert.remove();
+    }
+    
+    // アイコンと追加メッセージ
+    let iconAndMessage = '<i class="bi bi-check-circle me-2"></i><strong>削除完了</strong> ' + escapeHtml(message);
+    
+    if (movedPostsCount > 0) {
+      iconAndMessage += '<br><small class="text-success">削除済み投稿は適切に「Deleted_Artist」に移行されました。</small>';
+    }
+    
+    // 成功メッセージを作成
+    const successAlert = document.createElement('div');
+    successAlert.className = 'alert alert-success alert-dismissible fade show';
+    successAlert.innerHTML = `
+      ${iconAndMessage}
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    
+    // ページ上部に挿入
+    const container = document.querySelector('.container');
+    const firstChild = container.firstElementChild;
+    container.insertBefore(successAlert, firstChild);
+    
+    // 7秒後に自動で非表示
+    setTimeout(() => {
+      if (successAlert.parentNode) {
+        successAlert.remove();
+      }
+    }, 7000);
+  }
+  
+  // HTML エスケープ関数
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+});
+</script>
+
+<style>
+/* 削除ボタンのホバー効果 */
+.delete-artist-btn:hover {
+  background-color: #dc3545;
+  border-color: #dc3545;
+  color: white;
+}
+
+/* フェードアウト効果のためのトランジション */
+.list-group-item {
+  transition: opacity 0.3s ease-out;
+}
+
+/* モーダルのアイコンサイズ */
+.modal-body .bi {
+  font-size: 1.1em;
+}
+
+/* 警告アラートのスタイル */
+.alert-warning .bi-exclamation-triangle-fill {
+  color: #856404;
+}
+
+.alert-danger .bi-x-circle-fill {
+  color: #721c24;
+}
+
+/* スピナーのスタイル */
+.spinner-border-sm {
+  width: 1rem;
+  height: 1rem;
+}
+</style>
+
 {% endblock %}

@@ -8,6 +8,7 @@ import uuid
 import secrets
 from pathlib import Path
 from typing import Optional, Annotated
+from datetime import datetime
 
 from fastapi import FastAPI, Request, HTTPException, Depends, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -291,6 +292,9 @@ def on_startup():
         
         ensure_columns_and_slugs()
         logger.info("All columns ensured and slugs generated")
+        
+        # Deleted_Artist の確認・作成
+        ensure_deleted_artist()
         
         # 初期管理者を作成
         create_initial_admin()
@@ -860,6 +864,123 @@ def admin_user_search(
         ]
     }
 
+@app.get("/api/artists/search", name="artist_search_api")
+def artist_search_api(
+    q: str = "",
+    user: User = Depends(require_login),
+    db: Session = Depends(get_db)
+):
+    """アーティスト検索API（新規投稿時のオートコンプリート用）"""
+    if not q or len(q) < 1:
+        return {"artists": []}
+    
+    # 大文字小文字を無視し、特殊文字を通常のアルファベットに変換した検索
+    # SQLiteのCOLLATE NOCASE + LIKE演算子を使用
+    search_query = f"%{q}%"
+    
+    if user.is_admin:
+        # 管理者：全てのアーティストから検索（自分のものを優先）
+        my_artists = db.query(Artist).filter(
+            Artist.owner_id == user.id,
+            Artist.name.ilike(search_query)
+        ).order_by(Artist.name.asc()).limit(10).all()
+        
+        other_artists = db.query(Artist).filter(
+            (Artist.owner_id != user.id) | (Artist.owner_id == None),
+            Artist.name.ilike(search_query)
+        ).order_by(Artist.name.asc()).limit(10).all()
+        
+        artists = my_artists + other_artists[:max(0, 10 - len(my_artists))]
+    else:
+        # 一般ユーザー：自分に紐付けられたアーティストのみ
+        artists = db.query(Artist).filter(
+            Artist.owner_id == user.id,
+            Artist.name.ilike(search_query)
+        ).order_by(Artist.name.asc()).limit(10).all()
+    
+    return {
+        "artists": [
+            {
+                "id": a.id, 
+                "name": a.name,
+                "is_mine": a.owner_id == user.id if a.owner_id else False
+            }
+            for a in artists
+        ]
+    }
+
+# 新規アーティスト作成API（新規投稿時の動的作成用）
+@app.post("/api/artists/create", name="artist_create_api")
+def artist_create_api(
+    name: Annotated[str, Form()],
+    user: User = Depends(require_login),
+    db: Session = Depends(get_db)
+):
+    """新規投稿時の動的アーティスト作成API"""
+    name = (name or "").strip()
+    if not name:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "アーティスト名が入力されていません"}
+        )
+    
+    # 既存チェック
+    exists = db.query(Artist).filter(Artist.name.ilike(name)).first()
+    if exists:
+        # 既存の場合：権限チェック
+        if not user.is_admin and exists.owner_id != user.id:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "success": False, 
+                    "error": "このアーティスト名は既に他のユーザーに紐付けられています"
+                }
+            )
+        
+        return {
+            "success": True,
+            "artist": {
+                "id": exists.id,
+                "name": exists.name,
+                "is_mine": exists.owner_id == user.id if exists.owner_id else False
+            }
+        }
+    
+    # 新規作成
+    try:
+        # ユニークなslugを生成
+        while True:
+            slug = generate_slug()
+            if not db.query(Artist).filter(Artist.slug == slug).first():
+                break
+        
+        # 新しいアーティストを作成（作成者に自動で紐付け）
+        artist = Artist(
+            slug=slug,
+            name=name,
+            owner_id=user.id
+        )
+        db.add(artist)
+        db.commit()
+        
+        logger.info(f"New artist created by user {user.email}: {name}")
+        
+        return {
+            "success": True,
+            "artist": {
+                "id": artist.id,
+                "name": artist.name,
+                "is_mine": True
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Artist creation failed: {e}")
+        db.rollback()
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": "アーティストの作成に失敗しました"}
+        )
 
 @app.get("/admin/artists/{artist_id}/edit", response_class=HTMLResponse, name="admin_artist_edit")
 def admin_artist_edit_page(
@@ -920,6 +1041,269 @@ def admin_artist_update(
     db.commit()
     return admin_artists(request, user=user, db=db)
 
+@app.post("/admin/artists/{artist_id}/delete", response_class=HTMLResponse, name="admin_artist_delete")
+def admin_artist_delete(
+    artist_id: int,
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """アーティスト削除（管理者のみ）- SQLAlchemy自動更新回避版"""
+    artist = db.get(Artist, artist_id)
+    if not artist:
+        raise HTTPException(404, "artist_not_found")
+    
+    # Deleted_Artistは削除不可
+    if artist.name == "Deleted_Artist":
+        return templates.TemplateResponse(
+            "admin_artists.html",
+            ctx(
+                request,
+                user=user,
+                artists=db.scalars(select(Artist).order_by(Artist.name.asc())).all(),
+                users=db.scalars(select(User).order_by(User.id.desc())).all(),
+                error="システムアーティスト「Deleted_Artist」は削除できません。"
+            ),
+            status_code=400
+        )
+    
+    # 紐づいている投稿を分析
+    all_posts = db.scalars(
+        select(Post).where(Post.artist_id == artist_id)
+    ).all()
+    
+    active_posts = [p for p in all_posts if not p.is_deleted]
+    deleted_posts = [p for p in all_posts if p.is_deleted]
+    
+    # アクティブな投稿がある場合は削除不可
+    if active_posts:
+        error_msg = f"「{artist.name}」は{len(active_posts)}件のアクティブな投稿に紐づいているため削除できません。"
+        if deleted_posts:
+            error_msg += f"（削除済み投稿: {len(deleted_posts)}件）"
+        
+        return templates.TemplateResponse(
+            "admin_artists.html",
+            ctx(
+                request,
+                user=user,
+                artists=db.scalars(select(Artist).order_by(Artist.name.asc())).all(),
+                users=db.scalars(select(User).order_by(User.id.desc())).all(),
+                error=error_msg
+            ),
+            status_code=400
+        )
+    
+    try:
+        artist_name = artist.name
+        
+        # 削除済み投稿がある場合は Deleted_Artist に移行
+        if deleted_posts:
+            deleted_artist = get_or_create_deleted_artist(db)
+            
+            # ⚠️ 重要：生SQLで直接更新してSQLAlchemyの自動更新を回避
+            if len(deleted_posts) == 1:
+                # 単一の投稿の場合
+                db.execute(
+                    text("UPDATE posts SET artist_id = :new_artist_id, updated_at = :updated_at WHERE id = :post_id"),
+                    {
+                        "new_artist_id": deleted_artist.id,
+                        "updated_at": datetime.utcnow(),
+                        "post_id": deleted_posts[0].id
+                    }
+                )
+            else:
+                # 複数の投稿の場合
+                post_ids_str = ','.join(str(p.id) for p in deleted_posts)
+                db.execute(
+                    text(f"UPDATE posts SET artist_id = :new_artist_id, updated_at = :updated_at WHERE id IN ({post_ids_str})"),
+                    {
+                        "new_artist_id": deleted_artist.id,
+                        "updated_at": datetime.utcnow()
+                    }
+                )
+            
+            logger.info(f"Moved {len(deleted_posts)} deleted posts to Deleted_Artist for artist: {artist_name}")
+        
+        # ⚠️ 重要：アーティスト削除も生SQLを使用
+        db.execute(
+            text("DELETE FROM artists WHERE id = :artist_id"),
+            {"artist_id": artist_id}
+        )
+        
+        # 変更をコミット
+        db.commit()
+        logger.info(f"Artist deleted by {user.email}: {artist_name} (ID: {artist_id})")
+        
+        # 成功時のリダイレクト
+        return admin_artists(request, user=user, db=db)
+        
+    except Exception as e:
+        logger.error(f"Artist deletion failed: {e}")
+        db.rollback()
+        raise HTTPException(500, "deletion_failed")
+
+@app.post("/api/admin/artists/{artist_id}/delete", name="api_admin_artist_delete")
+def api_admin_artist_delete(
+    artist_id: int,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """アーティスト削除API（AJAX用）- SQLAlchemy自動更新回避版"""
+    artist = db.get(Artist, artist_id)
+    if not artist:
+        return JSONResponse(
+            status_code=404,
+            content={"success": False, "error": "アーティストが見つかりません"}
+        )
+    
+    # Deleted_Artistは削除不可
+    if artist.name == "Deleted_Artist":
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": "システムアーティスト「Deleted_Artist」は削除できません。"
+            }
+        )
+    
+    # 紐づいている投稿を分析
+    all_posts = db.scalars(
+        select(Post).where(Post.artist_id == artist_id)
+    ).all()
+    
+    active_posts = [p for p in all_posts if not p.is_deleted]
+    deleted_posts = [p for p in all_posts if p.is_deleted]
+    
+    # アクティブな投稿がある場合は削除不可
+    if active_posts:
+        error_msg = f"「{artist.name}」は{len(active_posts)}件のアクティブな投稿に紐づいているため削除できません。"
+        if deleted_posts:
+            error_msg += f"削除済み投稿（{len(deleted_posts)}件）は「Deleted_Artist」に移行されます。"
+        
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": error_msg,
+                "active_posts": len(active_posts),
+                "deleted_posts": len(deleted_posts),
+                "active_post_titles": [p.title for p in active_posts[:5]]
+            }
+        )
+    
+    try:
+        artist_name = artist.name
+        moved_posts_count = 0
+        
+        # 削除済み投稿がある場合は Deleted_Artist に移行
+        if deleted_posts:
+            deleted_artist = get_or_create_deleted_artist(db)
+            
+            # ⚠️ 重要：SQLAlchemyのORM更新ではなく、生SQLを使用して直接更新
+            # これによりSQLAlchemyの自動的な関係性更新を回避
+            for post in deleted_posts:
+                db.execute(
+                    text("UPDATE posts SET artist_id = :new_artist_id, updated_at = :updated_at WHERE id = :post_id"),
+                    {
+                        "new_artist_id": deleted_artist.id,
+                        "updated_at": datetime.utcnow(),
+                        "post_id": post.id
+                    }
+                )
+            moved_posts_count = len(deleted_posts)
+            
+            logger.info(f"Moved {moved_posts_count} deleted posts to Deleted_Artist for artist: {artist_name}")
+        
+        # ⚠️ 重要：アーティスト削除も生SQLを使用
+        # SQLAlchemyのカスケード削除や関係性更新を完全に回避
+        db.execute(
+            text("DELETE FROM artists WHERE id = :artist_id"),
+            {"artist_id": artist_id}
+        )
+        
+        # 変更をコミット
+        db.commit()
+        
+        logger.info(f"Artist deleted via API by {user.email}: {artist_name} (ID: {artist_id})")
+        
+        # 成功メッセージを構築
+        success_msg = f"「{artist_name}」を削除しました"
+        if moved_posts_count > 0:
+            success_msg += f"（削除済み投稿{moved_posts_count}件を「Deleted_Artist」に移行）"
+        
+        return {
+            "success": True,
+            "message": success_msg,
+            "deleted_artist": {"id": artist_id, "name": artist_name},
+            "moved_posts_count": moved_posts_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Artist deletion failed via API: {e}")
+        db.rollback()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False, 
+                "error": f"削除処理中にエラーが発生しました: {str(e)}"
+            }
+        )
+
+# startup時にDeleted_Artistを確認・作成する処理を追加
+def ensure_deleted_artist():
+    """起動時にDeleted_Artistの存在を確認・作成"""
+    db = SessionLocal()
+    try:
+        deleted_artist = db.query(Artist).filter(Artist.name == "Deleted_Artist").first()
+        
+        if not deleted_artist:
+            # ユニークなslugを生成
+            while True:
+                slug = generate_slug()
+                if not db.query(Artist).filter(Artist.slug == slug).first():
+                    break
+            
+            # Deleted_Artistを作成
+            deleted_artist = Artist(
+                slug=slug,
+                name="Deleted_Artist",
+                owner_id=None
+            )
+            db.add(deleted_artist)
+            db.commit()
+            logger.info(f"Created system Deleted_Artist on startup with ID: {deleted_artist.id}")
+        else:
+            logger.info(f"Deleted_Artist already exists with ID: {deleted_artist.id}")
+            
+    except Exception as e:
+        logger.error(f"Error ensuring Deleted_Artist: {e}")
+        db.rollback()
+    finally:
+        db.close()
+        
+def get_or_create_deleted_artist(db: Session) -> Artist:
+    """削除済み投稿用のダミーアーティストを取得または作成"""
+    deleted_artist = db.query(Artist).filter(Artist.name == "Deleted_Artist").first()
+    
+    if not deleted_artist:
+        # ユニークなslugを生成
+        while True:
+            slug = generate_slug()
+            if not db.query(Artist).filter(Artist.slug == slug).first():
+                break
+        
+        # Deleted_Artistを作成
+        deleted_artist = Artist(
+            slug=slug,
+            name="Deleted_Artist",
+            owner_id=None  # 誰にも紐付けない
+        )
+        db.add(deleted_artist)
+        db.flush()  # IDを取得するためにフラッシュ
+        logger.info(f"Created Deleted_Artist dummy with ID: {deleted_artist.id}")
+    
+    return deleted_artist
+        
 # ユーザー
 @app.get("/admin/users", response_class=HTMLResponse, name="admin_users")
 def admin_users(request: Request, user: User = Depends(require_admin), db: Session = Depends(get_db)):

@@ -1,31 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3 class="mb-0">Admin – Artists</h3>
-    <a href="/admin" class="btn btn-outline-secondary">Back</a>
+    <h3 class="mb-0">アーティスト管理</h3>
+    <a href="/admin" class="btn btn-outline-secondary">戻る</a>
   </div>
 
   <div class="row g-3">
     <div class="col-md-6">
       <div class="card p-3">
-        <h6 class="fw-bold">Create Artist</h6>
+        <h6 class="fw-bold">アーティストを登録する</h6>
         <form method="post" action="/admin/artists">
-          <div class="mb-2"><input class="form-control" type="text" name="name" placeholder="Artist Name" required></div>
-          <button class="btn btn-primary">Create</button>
+          <div class="mb-2"><input class="form-control" type="text" name="name" placeholder="アーティスト名" required></div>
+          <button class="btn btn-primary">登録</button>
         </form>
       </div>
     </div>
   </div>
 
   <div class="mt-4">
-    <h6 class="fw-bold mb-2">Artists</h6>
+    <h6 class="fw-bold mb-2">アーティスト一覧</h6>
     <ul class="list-group">
       {% for a in artists %}
       <li class="list-group-item d-flex justify-content-between align-items-center">
         <span>{{ a.name }} {% if a.owner %}<span class="text-muted">– {{ a.owner.email }}</span>{% endif %}</span>
         <div class="d-flex gap-2">
-          <a class="btn btn-sm btn-outline-secondary" href="/artist/{{ a.slug or a.id }}">Open</a>
-          <a class="btn btn-sm btn-outline-primary" href="/admin/artists/{{ a.id }}/edit">Edit</a>
+          <a class="btn btn-sm btn-outline-secondary" href="/artist/{{ a.slug or a.id }}">開く</a>
+          <a class="btn btn-sm btn-outline-primary" href="/admin/artists/{{ a.id }}/edit">編集</a>
         </div>
       </li>
       {% else %}

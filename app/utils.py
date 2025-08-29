@@ -42,10 +42,11 @@ def _extract_youtube_id(url: Optional[str]) -> Optional[str]:
         return None
     if "youtu.be/" in url:
         return url.split("youtu.be/")[1].split("?")[0]
-    if "youtube.com/watch" in url and "v=" in url:
+    # 通常のYouTube URLとYouTube Music URLの両方に対応
+    if ("youtube.com/watch" in url or "music.youtube.com/watch" in url) and "v=" in url:
         return url.split("v=")[1].split("&")[0]
     return None
-
+    
 def youtube_embed(url: Optional[str]) -> Optional[str]:
     vid = _extract_youtube_id(url)
     if not vid:
